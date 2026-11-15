@@ -1,15 +1,21 @@
-// VIGIL // FOUNDRY — bot AI.
-// State machine: PATROL -> ALERT (gunshot heard / glimpse) -> ENGAGE
-// (burst fire + tactical strafe) -> TAKE_COVER (HP < 40%). Vision is a
-// raycast cone blocked by walls and by smoke volumes; hearing is an event
-// the game feeds in. One attack bot carries the charge and plants it.
-// Difficulty scales by wave: faster reactions, tighter aim, longer bursts.
-// Bot fire resolves through an aim-error cone from the bot's eye; every
-// shot draws a tracer so the player can read where fire came from.
+// VIGIL // FOUNDRY — bot AI. State machine: PATROL -> ALERT (gunshot
+// heard / glimpse) -> ENGAGE (burst fire + tactical strafe) -> TAKE_COVER
+// (HP < 40%). Vision is a raycast cone blocked by walls and smoke;
+// hearing is an event the game feeds in. One attack bot carries the
+// charge and plants it. Difficulty scales by wave: faster reactions,
+// tighter aim, longer bursts. Bot fire resolves through the same hitscan
+// path the player uses (ctx.hitscan, main.js): line-of-sight raycast vs
+// world and body hitboxes, spread from the bot's state, hitgroup from
+// the real hit position, damage through the shared damage module. No
+// probability roll decides a bot hit. Bots also talk: first contact,
+// low HP and plant events go out as radio callouts (radio.js), and the
+// squad reacts to them. Each bot follows the round's team plan (plans.js):
+// a role and a route, held until a callout rotates it.
 
 import * as THREE from 'three';
 import { applyHit } from './damage.js';
 import { WEAPONS } from './config.js';
+import { zoneName } from './radio.js';
 
 const TEAM_COLOR = { attack: 0xd86a2a, defend: 0x3a7bd5 };
 const NAMES = {
@@ -46,8 +52,8 @@ export class Bot {
     this.state = 'PATROL';
     this.path = [];
     this.pathIdx = 0;
-    this.target = null;      // {kind:'player'|'bot', ref, pos}
-    this.lastSeen = null;    // last known enemy position
+    this.target = null;
+    this.lastSeen = null;
     this.reactionUntil = 0;
     this.burstLeft = 0;
     this.nextShotAt = 0;
@@ -60,6 +66,10 @@ export class Bot {
     this.crouching = false;
     this.speed = 3.4;
     this.wave = wave;
+    this.role = 'entry';
+    this.planRoute = null;
+    this.planIdx = 0;
+    this.planDone = false;
     this.group = this.buildMesh(scene);
     this.group.position.copy(this.pos);
   }
@@ -69,20 +79,31 @@ export class Bot {
     const group = new THREE.Group();
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.9 });
-    // Legs (hitgroup leg), torso (chest), head (head).
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.75, 0.3), dark);
-    legs.position.y = 0.375; legs.userData = { bot: this, part: 'leg' };
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.62, 0.32), mat);
-    torso.position.y = 1.06; torso.userData = { bot: this, part: 'chest' };
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), new THREE.MeshStandardMaterial({ color: 0xc9a586, roughness: 0.7 }));
-    head.position.y = 1.56; head.userData = { bot: this, part: 'head' };
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.1, 0.05), dark);
-    visor.position.set(0, 1.58, 0.18); group.add(visor);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.85), dark);
-    gun.position.set(0.28, 1.15, 0.3); group.add(gun);
-    group.add(legs); group.add(torso); group.add(head);
+    const box = (w, h, d, m, x, y, z) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+      mesh.position.set(x, y, z);
+      group.add(mesh);
+      return mesh;
+    };
+    // Team color reads at a glance: colored torso, helmet stripe and
+    // shoulder pads; attackers carry a backpack, defenders a bulkier
+    // chest plate, so the two sides have distinct silhouettes.
+    const torsoW = this.team === 'defend' ? 0.62 : 0.55;
+    const legs = box(0.42, 0.75, 0.3, dark, 0, 0.375, 0);
+    legs.userData = { bot: this, part: 'leg' };
+    const torso = box(torsoW, 0.62, 0.32, mat, 0, 1.06, 0);
+    torso.userData = { bot: this, part: 'chest' };
+    const head = box(0.34, 0.34, 0.34, new THREE.MeshStandardMaterial({ color: 0xc9a586, roughness: 0.7 }), 0, 1.56, 0);
+    head.userData = { bot: this, part: 'head' };
+    box(0.36, 0.06, 0.36, new THREE.MeshBasicMaterial({ color }), 0, 1.75, 0);
+    box(0.36, 0.1, 0.05, new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.3, emissive: color, emissiveIntensity: 0.35 }), 0, 1.58, 0.18);
+    for (const sx of [-1, 1]) box(0.14, 0.12, 0.34, mat, sx * (torsoW / 2 + 0.05), 1.34, 0);
+    if (this.team === 'attack') box(0.4, 0.5, 0.18, dark, 0, 1.1, -0.26);
+    else box(0.5, 0.4, 0.06, new THREE.MeshStandardMaterial({ color: 0x2e4a6a, roughness: 0.6, metalness: 0.3 }), 0, 1.1, 0.19);
+    box(0.09, 0.12, 1.0, dark, 0.28, 1.15, 0.35);
+    box(0.1, 0.03, 0.5, new THREE.MeshBasicMaterial({ color }), 0.28, 1.22, 0.35);
+    box(0.06, 0.06, 0.12, new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.7 }), 0.28, 1.15, -0.2);
     this.hitMeshes = [legs, torso, head];
-    this.bodyParts = { legs, torso, head };
     const label = nameSprite(this.name, this.team === 'attack' ? '#ffb060' : '#8fc4ff');
     label.position.y = 2.05;
     group.add(label);
@@ -97,8 +118,6 @@ export class Bot {
 
   isBlinded(now) { return now < this.blindedUntil; }
 
-  // Vision: within 38 m, inside a 100-degree cone (or already alerted),
-  // line of sight not blocked by walls or smoke.
   canSee(pos, now, smokes) {
     if (this.isBlinded(now)) return false;
     const dx = pos.x - this.pos.x, dz = pos.z - this.pos.z;
@@ -106,7 +125,7 @@ export class Bot {
     if (dist > 38) return false;
     const ang = Math.atan2(dx, dz);
     let diff = Math.abs(((ang - this.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-    if (diff > 1.75 && this.state === 'PATROL') return false; // ~100 deg cone
+    if (diff > 1.75 && this.state === 'PATROL') return false;
     const eye = this.eyePos;
     const target = new THREE.Vector3(pos.x, pos.y + 1.2, pos.z);
     if (this.world.segmentBlocked(eye, target, 0.12)) return false;
@@ -121,6 +140,29 @@ export class Bot {
       this.state = 'ALERT';
       this.lastSeen = pos.clone();
     }
+  }
+
+  // Radio: say a line through the shared Radio (radio.js). Emits a
+  // 'radio' event so main.js can show it and order reactions. pos is the
+  // radar-blip position (the enemy's position for a contact callout).
+  // Returns the line or null when throttled.
+  callRadio(ctx, kind, area, pos) {
+    if (!ctx.radio) return null;
+    const line = ctx.radio.say(this, kind, area, ctx.now, this.world.def, pos ?? this.pos);
+    if (line) ctx.events.push({ type: 'radio', line, kind, bot: this, area, x: (pos ?? this.pos).x, z: (pos ?? this.pos).z });
+    return line;
+  }
+
+  // Rotate toward a callout: break off the plan route and walk to the
+  // named point. Fighting and covering bots do not rotate.
+  rotateTo(x, z) {
+    if (this.state === 'ENGAGE' || this.state === 'TAKE_COVER') return false;
+    this.planRoute = [{ x, z }];
+    this.planIdx = 0;
+    this.planDone = false;
+    this.path = []; this.pathIdx = 0;
+    this.state = 'PATROL';
+    return true;
   }
 
   setPathTo(tx, tz) {
@@ -144,14 +186,11 @@ export class Bot {
     return false;
   }
 
-  // Main per-step update. ctx: {now, dt, player, bots, smokes, events,
-  // onBotShot, onBotKill, plantSite, sites, wave}.
   update(ctx) {
     if (!this.alive) return;
     const now = ctx.now;
     const speed = this.crouching ? this.speed * 0.5 : this.speed;
 
-    // Find the nearest living enemy.
     let enemy = null, enemyDist = Infinity;
     const candidates = [];
     if (ctx.player.alive && ctx.player.team !== this.team) candidates.push({ kind: 'player', ref: ctx.player, pos: ctx.player.pos });
@@ -163,23 +202,23 @@ export class Bot {
       if (d < enemyDist) { enemyDist = d; enemy = c; }
     }
 
-    // Vision / alert transitions.
     if (enemy && this.canSee(enemy.pos, now, ctx.smokes)) {
       if (this.state !== 'ENGAGE') {
         this.state = 'ENGAGE';
         this.reactionUntil = now + this.reactionTime();
+        this.callRadio(ctx, 'contact', zoneName(this.world.def, enemy.pos.x, enemy.pos.z), enemy.pos);
       }
       this.target = enemy;
       this.lastSeen = enemy.pos.clone();
+      if (enemy.kind === 'bot' && ctx.seenEnemies) ctx.seenEnemies.add(enemy.ref);
     } else if (this.state === 'ENGAGE' && enemy && enemyDist < 24) {
-      // Lost sight but close: stay alerted at last known position.
       this.state = 'ALERT';
     }
 
     if (this.hp < 40 && this.state !== 'TAKE_COVER' && this.state !== 'ENGAGE') {
       this.state = 'TAKE_COVER';
       this.coverUntil = now + 4;
-      // Retreat: pick the waypoint farthest from the last seen enemy.
+      this.callRadio(ctx, 'lowhp', zoneName(this.world.def, this.pos.x, this.pos.z));
       let best = 0, bd = -1;
       this.world.graph.forEach((n, i) => {
         const d = this.lastSeen ? Math.hypot(n.x - this.lastSeen.x, n.z - this.lastSeen.z) : 0;
@@ -188,7 +227,6 @@ export class Bot {
       this.path = [best]; this.pathIdx = 0;
     }
 
-    // Planting: the carrier walks to the nearest site and channels.
     if (this.carrier && this.team === 'attack' && ctx.phase === 'live' && !ctx.chargePlanted && this.state !== 'ENGAGE') {
       const site = nearestSite(this.pos, ctx.sites);
       const d = Math.hypot(site.x - this.pos.x, site.z - this.pos.z);
@@ -210,14 +248,26 @@ export class Bot {
 
     switch (this.state) {
       case 'PATROL': {
-        if (this.pathIdx >= this.path.length) {
-          // Wander: pick a waypoint on the objective side.
-          const goal = this.team === 'attack'
-            ? ctx.sites[(Math.random() * ctx.sites.length) | 0]
-            : this.world.graph[(Math.random() * this.world.graph.length) | 0];
-          this.setPathTo(goal.x, goal.z);
+        // Follow the round's plan route, point by point; at the last
+        // point the bot holds (no wandering) until a callout rotates it.
+        // A bot with no plan (fallback) wanders the objective side.
+        if (this.planRoute && !this.planDone) {
+          const pt = this.planRoute[this.planIdx];
+          if (this.pathIdx >= this.path.length) this.setPathTo(pt.x, pt.z);
+          const arrived = this.followPath(ctx.dt, speed * 0.8);
+          if (arrived) {
+            this.planIdx++;
+            if (this.planIdx >= this.planRoute.length) { this.planDone = true; this.path = []; }
+          }
+        } else if (!this.planRoute) {
+          if (this.pathIdx >= this.path.length) {
+            const goal = this.team === 'attack'
+              ? ctx.sites[(Math.random() * ctx.sites.length) | 0]
+              : this.world.graph[(Math.random() * this.world.graph.length) | 0];
+            this.setPathTo(goal.x, goal.z);
+          }
+          this.followPath(ctx.dt, speed * 0.8);
         }
-        this.followPath(ctx.dt, speed * 0.8);
         break;
       }
       case 'ALERT': {
@@ -244,20 +294,18 @@ export class Bot {
         const dx = tp.x - this.pos.x, dz = tp.z - this.pos.z;
         const dist = Math.hypot(dx, dz);
         this.yaw = Math.atan2(dx, dz);
-        // Tactical strafe: sideways drift, flipping every 0.7-1.4 s.
         if (now > this.strafeUntil) {
           this.strafeDir *= -1;
           this.strafeUntil = now + 0.7 + Math.random() * 0.7;
         }
         const sx = Math.cos(this.yaw) * this.strafeDir;
         const sz = -Math.sin(this.yaw) * this.strafeDir;
-        const keep = dist > 14 ? 1 : dist < 6 ? -1 : 0; // hold ~6-14 m
+        const keep = dist > 14 ? 1 : dist < 6 ? -1 : 0;
         const mx = sx * 0.9 + Math.sin(this.yaw) * -keep * 0.5;
         const mz = sz * 0.9 + Math.cos(this.yaw) * -keep * 0.5;
         const moved = this.world.moveBox(this.pos.x, this.pos.y, this.pos.z, mx * speed * 0.55 * ctx.dt, mz * speed * 0.55 * ctx.dt, 0.36, 0.36, 1.7);
         this.pos.x = moved.x; this.pos.z = moved.z;
         this.pos.y = this.world.groundHeight(this.pos.x, this.pos.z);
-        // Burst fire after the reaction delay.
         if (now >= this.reactionUntil && now >= this.burstPauseUntil) {
           if (this.burstLeft <= 0) {
             this.burstLeft = this.burstSize();
@@ -281,39 +329,53 @@ export class Bot {
   burstPause() { return Math.max(0.5, 0.95 - (this.wave - 1) * 0.08); }
 
   aimError(dist) {
-    // Base aim error shrinks with wave; grows with distance and target speed.
     const base = Math.max(0.018, 0.055 - (this.wave - 1) * 0.004);
     return base * (1 + dist * 0.012);
   }
 
   shootAt(target, dist, ctx) {
-    if (this.mag <= 0) { this.mag = this.weapon.mag; return; } // instant bot reload
+    if (this.mag <= 0) { this.mag = this.weapon.mag; return; }
     this.mag--;
+    // Aim point: usually the chest, sometimes the head. Aim error
+    // (reaction/aim by wave, growing with distance) jitters the shot
+    // direction — then the shot resolves with the SAME hitscan path the
+    // player uses (ctx.hitscan, main.js). No probability roll decides a
+    // hit; a wall, a teammate or smoke in the way is a real miss, and the
+    // tracer ends where the ray actually stopped.
     const err = this.aimError(dist);
-    const roll = Math.random();
-    // Hit chance falls with aim error and distance; headshots are rare.
-    const hitP = Math.max(0.06, Math.min(0.85, 0.62 - err * 6 - dist * 0.004));
+    const tp = target.pos;
+    const aimY = tp.y + (Math.random() < 0.12 ? 1.55 : 1.1);
     const from = this.eyePos;
-    let end;
-    if (roll < hitP) {
-      const part = Math.random() < 0.14 ? 'head' : (Math.random() < 0.2 ? 'stomach' : 'chest');
-      const tgt = target.ref;
-      const res = applyHit(this.weapon, part, dist, tgt);
-      end = new THREE.Vector3(target.pos.x, target.pos.y + (part === 'head' ? 1.55 : 1.1), target.pos.z);
+    const dir = new THREE.Vector3(tp.x - from.x, aimY - from.y, tp.z - from.z).normalize();
+    const right = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+    dir.addScaledVector(right, (Math.random() - 0.5) * 2 * err)
+      .addScaledVector(up, (Math.random() - 0.5) * 2 * err).normalize();
+    const res = ctx.hitscan(from, dir, { excludeBot: this, shooter: 'bot', maxDist: 60 });
+    let smokeBlocked = false;
+    for (const s of ctx.smokes) {
+      if (segmentHitsSphere(from, res.point, s.pos, s.radius)) { smokeBlocked = true; break; }
+    }
+    if (smokeBlocked) {
+      const d = Math.max(1, res.dist * 0.5);
+      ctx.events.push({ type: 'botShot', shooter: this, target: target.ref, hit: false, from, end: from.clone().addScaledVector(dir, d) });
+      ctx.sound.shot(this.weapon.sound, dist);
+      return;
+    }
+    if (res.kind === 'bot' || res.kind === 'player') {
+      const tgt = res.kind === 'player' ? ctx.player : res.bot;
+      if (tgt.team === this.team) {
+        ctx.events.push({ type: 'botShot', shooter: this, target: target.ref, hit: false, from, end: res.point });
+        ctx.sound.shot(this.weapon.sound, dist);
+        return;
+      }
+      const hit = applyHit(this.weapon, res.part, res.dist, tgt);
       ctx.events.push({
-        type: 'botShot', shooter: this, target: tgt, hit: true, headshot: part === 'head',
-        killed: res.killed, damage: res.healthDmg, from, end,
+        type: 'botShot', shooter: this, target: tgt, hit: true, headshot: res.part === 'head',
+        killed: hit.killed, damage: hit.healthDmg, from, end: res.point,
       });
-      if (res.killed) ctx.events.push({ type: 'botKill', shooter: this, victim: tgt });
     } else {
-      // Miss: tracer lands near the target, offset by the aim error.
-      const off = (Math.random() - 0.5) * 2 * err * dist * 3;
-      end = new THREE.Vector3(
-        target.pos.x + off,
-        target.pos.y + 1.1 + (Math.random() - 0.5) * err * dist * 2,
-        target.pos.z + off * 0.6,
-      );
-      ctx.events.push({ type: 'botShot', shooter: this, target: target.ref, hit: false, from, end });
+      ctx.events.push({ type: 'botShot', shooter: this, target: target.ref, hit: false, from, end: res.point });
     }
     ctx.sound.shot(this.weapon.sound, dist);
   }
@@ -349,7 +411,6 @@ export function nearestSite(pos, sites) {
   return best;
 }
 
-// Segment vs sphere (smoke volume) test for line-of-sight blocking.
 export function segmentHitsSphere(a, b, center, radius) {
   const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
   const ac = { x: center.x - a.x, y: center.y - a.y, z: center.z - a.z };

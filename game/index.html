@@ -58,6 +58,23 @@
   .feed-item.bad { border-color: var(--red); color: var(--red); }
   .feed-item.fade { opacity: .35; }
 
+  #radio { position: fixed; left: 20px; top: 164px; display: flex; flex-direction: column; gap: 4px; max-width: 340px;
+    font-family: var(--font-readout); font-size: 12px; }
+  .radio-item { background: rgba(10,13,17,.78); border: 1px solid var(--hairline); border-left: 3px solid var(--muted);
+    padding: 4px 8px; border-radius: 3px; }
+  .radio-item.atk { border-left-color: var(--accent); }
+  .radio-item.def { border-left-color: var(--blue); }
+  .radio-item.fade { opacity: .35; }
+
+  #slots { position: fixed; right: 32px; bottom: 96px; display: flex; gap: 8px; font-family: var(--font-readout); font-size: 12px; }
+  #slots span { background: rgba(10,13,17,.72); border: 1px solid var(--hairline); padding: 4px 8px; border-radius: 3px; color: var(--muted); }
+  #slots span.sel { border-color: var(--accent); color: var(--ink); }
+  #slots b { color: var(--accent); margin-right: 4px; }
+  #utility { position: fixed; right: 32px; bottom: 128px; font-family: var(--font-readout); font-size: 12px; color: var(--muted);
+    background: rgba(10,13,17,.72); border: 1px solid var(--hairline); padding: 4px 8px; border-radius: 3px; }
+  #plan-label { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); font-family: var(--font-readout);
+    font-size: 12px; color: var(--gold); letter-spacing: .06em; text-shadow: 0 1px 4px #000; }
+
   #vitals { position: fixed; left: 32px; bottom: 24px; font-family: var(--font-readout); display: flex; gap: 22px; align-items: baseline; }
   #vitals .stat { display: flex; flex-direction: column; }
   #vitals .stat span { font-size: 11px; color: var(--muted); letter-spacing: .12em; }
@@ -135,6 +152,10 @@
     <span id="wave-label">WAVE 1</span>
   </div>
   <div id="feed"></div>
+  <div id="radio"></div>
+  <div id="slots"></div>
+  <div id="utility"></div>
+  <div id="plan-label"></div>
   <div id="crosshair"><i></i><i></i><i></i><i></i></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="flash"></div>
@@ -152,6 +173,7 @@
 
 <div id="buy-menu" class="hidden">
   <h2>BUY MENU <span style="color:var(--muted);font-size:13px">— press B to close</span></h2>
+  <p id="buy-plan" style="color:var(--gold)"></p>
   <p>Number keys 1–9 buy. Prices are CS-calibrated; armor and helmets use the pen model.</p>
   <table>
     <tr data-buy="kestrel" data-price="2700"><td class="key">1</td><td>Kestrel-7 rifle — 36 dmg, HS ×4, 600 RPM</td><td class="cost">$2,700</td></tr>
@@ -174,7 +196,7 @@
 <div id="deploy" class="panel">
   <section class="card" role="dialog" aria-modal="true" aria-labelledby="deploy-title">
     <h1 id="deploy-title">VIGIL <em>//</em> FOUNDRY</h1>
-    <p id="deploy-sub">Round-based 5v5 tactical FPS. Ember Jackals plant the charge; Harbor Wardens hold the sites. First to 9 rounds. Accuracy beats speed — stop, aim, tap.</p>
+    <p id="deploy-sub">Round-based 5v5 tactical FPS. Ember Jackals plant the charge; Harbor Wardens hold the sites. First to 9 rounds. Accuracy beats speed — stop, aim, tap. Each round your squad picks a team plan (Execute A/B, Spread, Rush Mid) and your bots call out contacts, plants and rotations on the radio.</p>
     <div id="deploy-map"></div>
     <div class="slider-row"><label for="sens">Sensitivity</label><input id="sens" type="range" min="0.3" max="2.5" step="0.05" value="1"><span id="sens-val">1.00</span></div>
     <button id="play" type="button">DEPLOY — CLICK TO PLAY</button>
@@ -206,6 +228,7 @@
       <tr><td>Clear time</td><td id="aar-time">—</td></tr>
       <tr><td>Damage dealt / taken</td><td id="aar-dmg">—</td></tr>
       <tr><td>Utility</td><td id="aar-util">—</td></tr>
+      <tr><td>Radio callouts</td><td id="aar-radio">—</td></tr>
       <tr><td>K / D</td><td id="aar-kd">—</td></tr>
       <tr><td>Composite score</td><td id="aar-score">—</td></tr>
     </table>

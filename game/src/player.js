@@ -18,7 +18,7 @@ export class Player {
     this.vel = new THREE.Vector3();
     this.yaw = 0;
     this.pitch = 0;
-    this.recoilPitch = 0; // accumulated camera kick, springs back to 0
+    this.recoilPitch = 0;
     this.recoilYaw = 0;
     this.crouched = false;
     this.onGround = true;
@@ -27,10 +27,10 @@ export class Player {
     this.helmet = false;
     this.money = 800;
     this.alive = true;
-    this.tagSlowUntil = 0; // being hit slows you (tagging)
+    this.tagSlowUntil = 0;
     this.height = 1.7;
     this.eye = EYE_STAND;
-    this.speedFrac = 0; // current speed / max speed, for spread + HUD
+    this.speedFrac = 0;
   }
 
   get eyePos() {
@@ -38,11 +38,9 @@ export class Player {
   }
 
   get maxSpeed() {
-    return 6.35; // knife speed; weapon multipliers apply in game.js
+    return 6.35;
   }
 
-  // input: {f, b, l, r, walk, crouch, jump} booleans; dt fixed step.
-  // moveSpeed is the current weapon's top speed in m/s.
   step(input, dt, moveSpeed, now) {
     if (!this.alive) return;
     const crouchTarget = input.crouch;
@@ -55,9 +53,8 @@ export class Player {
     let speed = moveSpeed;
     if (input.walk) speed *= 0.52;
     if (crouchTarget) speed *= 0.34;
-    if (now < this.tagSlowUntil) speed *= 0.55; // tagged: slow
+    if (now < this.tagSlowUntil) speed *= 0.55;
 
-    // Wish direction in world space from yaw.
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let wx = 0, wz = 0;
     if (input.f) { wx -= sin; wz -= cos; }
@@ -67,7 +64,6 @@ export class Player {
     const len = Math.hypot(wx, wz);
     if (len > 0) { wx /= len; wz /= len; }
 
-    // Acceleration toward wish velocity; fast friction when no input.
     const accel = this.onGround ? 42 : 10;
     const friction = this.onGround ? 11 : 0.4;
     this.vel.x += wx * accel * dt;
@@ -79,7 +75,6 @@ export class Player {
     }
     if (hv > speed) { this.vel.x *= speed / hv; this.vel.z *= speed / hv; }
 
-    // Gravity + jump.
     const groundY = this.world.groundHeight(this.pos.x, this.pos.z);
     if (input.jump && this.onGround) {
       this.vel.y = 5.6;
@@ -93,7 +88,6 @@ export class Player {
       this.onGround = true;
     }
 
-    // AABB slide against the world.
     const moved = this.world.moveBox(
       this.pos.x, this.pos.y, this.pos.z,
       this.vel.x * dt, this.vel.z * dt,
@@ -103,7 +97,6 @@ export class Player {
 
     this.speedFrac = Math.min(1, Math.hypot(this.vel.x, this.vel.z) / speed);
 
-    // Recoil spring: kick decays back toward zero.
     const k = Math.min(1, dt * 9);
     this.recoilPitch *= (1 - k);
     this.recoilYaw *= (1 - k);
@@ -120,7 +113,6 @@ export class Player {
   addRecoil(pitch, yaw) {
     this.recoilPitch += pitch;
     this.recoilYaw += yaw;
-    // Clamp the accumulated kick so a full spray stays on screen.
     this.recoilPitch = Math.min(this.recoilPitch, 0.55);
     this.recoilYaw = Math.max(-0.3, Math.min(0.3, this.recoilYaw));
   }

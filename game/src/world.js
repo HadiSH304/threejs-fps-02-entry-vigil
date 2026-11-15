@@ -11,7 +11,28 @@ const MAT_COLORS = {
   concrete: 0x8a8d90, asphalt: 0x55585c, wall: 0x9a958a,
   plywood: 0xb08a58, crate: 0x9a7848, metal: 0x6a767e,
   target: 0xe8e2d2, furnace: 0x2a2018,
+  brick: 0xa8705a, cobble: 0x8a7a68, hazard: 0xc8a028,
 };
+
+function gradientTex(w, h, stops, vertical) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const grad = vertical ? g.createLinearGradient(0, 0, 0, h) : g.createLinearGradient(0, 0, w, 0);
+  for (const [t, col] of stops) grad.addColorStop(t, col);
+  g.fillStyle = grad; g.fillRect(0, 0, w, h);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function radialTex(size, stops) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, 4, size / 2, size / 2, size / 2);
+  for (const [t, col] of stops) grad.addColorStop(t, col);
+  g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 export class World {
   constructor(scene, textures, mapDef) {
@@ -20,9 +41,9 @@ export class World {
     this.def = mapDef;
     this.group = new THREE.Group();
     this.group.name = `world-${mapDef.id}`;
-    this.colliders = []; // {minX,maxX,minY,maxY,minZ,maxZ}
-    this.ramps = [];     // {x,z,w,len,dir,y0,y1}
-    this.platforms = []; // walkable tops {minX,maxX,minZ,maxZ,top}
+    this.colliders = [];
+    this.ramps = [];
+    this.platforms = [];
     this.ownedGeometries = [];
     this.ownedMaterials = [];
     this.lights = [];
@@ -66,7 +87,30 @@ export class World {
     this.scene.background = new THREE.Color(def.sky);
     this.scene.fog = new THREE.FogExp2(def.fog[0], def.fog[1] / 1000 * 0.55);
 
-    // Ground.
+    // Outdoor sunset sky: a gradient dome (amber horizon fading to dusk
+    // purple) instead of a flat color, so the yard reads as dusk at a
+    // glance. Fog is off for the dome; it sits far outside the fog range.
+    if (def.outdoor) {
+      const domeTex = gradientTex(4, 256, [[0, '#2e1a3a'], [0.45, '#7a3a4a'], [0.68, '#e8722a'], [0.8, '#ffb060'], [1, '#5a3a28']], true);
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(150, 24, 16),
+        new THREE.MeshBasicMaterial({ map: domeTex, side: THREE.BackSide, fog: false }),
+      );
+      this.group.add(dome);
+      this.ownedGeometries.push(dome.geometry);
+      this.ownedMaterials.push(dome.material);
+      const sunTex = radialTex(128, [[0, 'rgba(255,220,150,1)'], [0.35, 'rgba(255,160,70,0.9)'], [1, 'rgba(255,120,40,0)']]);
+      const disc = new THREE.Mesh(
+        new THREE.PlaneGeometry(34, 34),
+        new THREE.MeshBasicMaterial({ map: sunTex, transparent: true, fog: false, depthWrite: false }),
+      );
+      disc.position.set(120, 26, -64);
+      disc.lookAt(0, 6, 0);
+      this.group.add(disc);
+      this.ownedGeometries.push(disc.geometry);
+      this.ownedMaterials.push(disc.material);
+    }
+
     const gGeo = new THREE.PlaneGeometry(def.ground.w, def.ground.d);
     this.ownedGeometries.push(gGeo);
     const ground = new THREE.Mesh(gGeo, this.mat(def.ground.mat, { rough: 0.95 }));
@@ -76,8 +120,6 @@ export class World {
 
     // Hemisphere ambience + sun (shadows only on the outdoor map, where
     // the long shadows are part of the look; indoor light is fluorescent).
-    // Bright enough to read at a glance: the first screenshot pass was
-    // too dark to tell walls from floor, so ambience is up across the board.
     const hemi = new THREE.HemisphereLight(def.ambient, 0x2a2e35, 1.5);
     this.group.add(hemi); this.lights.push(hemi);
     const sun = new THREE.DirectionalLight(def.sun.color, def.sun.intensity);
@@ -93,15 +135,12 @@ export class World {
     }
     this.group.add(sun); this.group.add(sun.target); this.lights.push(sun);
     if (def.outdoor) {
-      // Southern fill so sun-shadowed wall faces still read (the first
-      // Foundry capture was one big dark slab facing the player).
-      const fill = new THREE.DirectionalLight(0xbfd0e0, 0.55);
+      const fill = new THREE.DirectionalLight(0x9a7ab0, 0.7);
       fill.position.set(-20, 25, 22);
       fill.target.position.set(0, 0, 0);
       this.group.add(fill); this.group.add(fill.target); this.lights.push(fill);
     }
 
-    // Solids + ramps from the layout array.
     for (const s of def.solids) {
       if (s.ramp) {
         this.ramps.push(s);
@@ -142,7 +181,6 @@ export class World {
       if (y0 > 0) this.platforms.push({ minX: s.x - s.w / 2, maxX: s.x + s.w / 2, minZ: s.z - s.d / 2, maxZ: s.z + s.d / 2, top: y0 + s.h });
     }
 
-    // Killhouse ceiling + fluorescent panels.
     if (def.ceiling) {
       const cg = new THREE.PlaneGeometry(def.ground.w, def.ground.d);
       this.ownedGeometries.push(cg);
@@ -174,7 +212,6 @@ export class World {
       ring.position.set(site.x, 0.06, site.z);
       this.group.add(ring);
       this.siteMeshes.push(ring);
-      // Floating letter sprite.
       const c = document.createElement('canvas'); c.width = c.height = 128;
       const g = c.getContext('2d');
       g.fillStyle = 'rgba(20,16,8,0.65)'; g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill();
@@ -189,12 +226,102 @@ export class World {
       this.group.add(sprite);
     }
 
+    this.buildProps();
+    this.buildSigns();
+
     this.buildWaypoints();
   }
 
+  // Props: barrels (hazard-banded cylinders), planters (box + green
+  // top), striped barriers (low cover) and lamps (pole + warm head).
+  // Visual + colliders, built from the same layout data as walls.
+  col(x, z, hx, hz, h) {
+    this.colliders.push({ minX: x - hx, maxX: x + hx, minY: 0, maxY: h, minZ: z - hz, maxZ: z + hz });
+  }
+
+  buildProps() {
+    const def = this.def;
+    for (const p of def.props ?? []) {
+      if (p.kind === 'barrel') {
+        const geo = new THREE.CylinderGeometry(0.42, 0.42, 1.1, 12);
+        this.ownedGeometries.push(geo);
+        const mesh = new THREE.Mesh(geo, this.mat('metal', { rough: 0.6, metal: 0.4 }));
+        mesh.position.set(p.x, 0.55, p.z);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.group.add(mesh);
+        const bandGeo = new THREE.CylinderGeometry(0.43, 0.43, 0.18, 12);
+        this.ownedGeometries.push(bandGeo);
+        const band = new THREE.Mesh(bandGeo, this.mat('hazard', { rough: 0.7 }));
+        band.position.set(p.x, 0.75, p.z);
+        this.group.add(band);
+        this.col(p.x, p.z, 0.42, 0.42, 1.1);
+      } else if (p.kind === 'planter') {
+        const geo = new THREE.BoxGeometry(1.6, 0.7, 1.6);
+        this.ownedGeometries.push(geo);
+        const mesh = new THREE.Mesh(geo, this.mat('concrete', { rough: 1 }));
+        mesh.position.set(p.x, 0.35, p.z);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.group.add(mesh);
+        const topGeo = new THREE.BoxGeometry(1.4, 0.25, 1.4);
+        this.ownedGeometries.push(topGeo);
+        const top = new THREE.Mesh(topGeo, new THREE.MeshStandardMaterial({ color: 0x4a6a34, roughness: 1 }));
+        this.ownedMaterials.push(top.material);
+        top.position.set(p.x, 0.8, p.z);
+        this.group.add(top);
+        this.col(p.x, p.z, 0.8, 0.8, 0.95);
+      } else if (p.kind === 'barrier') {
+        const geo = new THREE.BoxGeometry(2.2, 1.0, 0.25);
+        this.ownedGeometries.push(geo);
+        const mesh = new THREE.Mesh(geo, this.mat('hazard', { rough: 0.7 }));
+        mesh.position.set(p.x, 0.5, p.z);
+        mesh.rotation.y = p.rotY ?? 0;
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.group.add(mesh);
+        const long = Math.abs(Math.cos(mesh.rotation.y)) > 0.5;
+        this.col(p.x, p.z, long ? 1.1 : 0.13, long ? 0.13 : 1.1, 1.0);
+      } else if (p.kind === 'lamp') {
+        const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 3.4, 8);
+        this.ownedGeometries.push(poleGeo);
+        const pole = new THREE.Mesh(poleGeo, this.mat('metal', { rough: 0.5, metal: 0.6 }));
+        pole.position.set(p.x, 1.7, p.z);
+        pole.castShadow = true;
+        this.group.add(pole);
+        const headGeo = new THREE.SphereGeometry(0.22, 10, 8);
+        this.ownedGeometries.push(headGeo);
+        const head = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({ color: 0xffc46b }));
+        head.position.set(p.x, 3.5, p.z);
+        this.group.add(head);
+        const glow = new THREE.PointLight(0xffb060, 6, 10, 1.8);
+        glow.position.set(p.x, 3.4, p.z);
+        this.group.add(glow); this.lights.push(glow);
+        this.col(p.x, p.z, 0.1, 0.1, 3.4);
+      }
+    }
+  }
+
+  // Painted wall signage: canvas text on a dark plate, placed from the
+  // layout array (site letters, map name, warnings). No external art.
+  buildSigns() {
+    for (const s of this.def.signs ?? []) {
+      const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+      const g = c.getContext('2d');
+      g.fillStyle = 'rgba(16,12,8,0.82)'; g.fillRect(0, 0, 512, 128);
+      g.strokeStyle = '#e8722a'; g.lineWidth = 6; g.strokeRect(4, 4, 504, 120);
+      g.fillStyle = '#ffb060'; g.font = 'bold 56px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(s.text, 256, 66);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+      const geo = new THREE.PlaneGeometry(s.w, s.w / 4);
+      this.ownedGeometries.push(geo);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      this.ownedMaterials.push(mat);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(s.x, s.y, s.z);
+      mesh.rotation.y = s.rotY;
+      this.group.add(mesh);
+    }
+  }
+
   buildWaypoints() {
-    // Graph: nodes are the layout waypoints; edges join nodes within 13 m
-    // whose straight line is not blocked by a wall (2D slab test at y=1.2).
     const pts = this.def.waypoints;
     this.graph = pts.map((p) => ({ x: p[0], z: p[1], edges: [] }));
     for (let i = 0; i < pts.length; i++) {
@@ -217,7 +344,6 @@ export class World {
     return best;
   }
 
-  // BFS path of waypoint indices from (x,z) to the waypoint nearest (tx,tz).
   findPath(x, z, tx, tz) {
     const start = this.nearestWaypoint(x, z);
     const goal = this.nearestWaypoint(tx, tz);
@@ -237,7 +363,6 @@ export class World {
     return path;
   }
 
-  // Slab test: does segment a->b hit any solid collider (3D)?
   segmentBlocked(a, b, yPad = 0) {
     for (const c of this.colliders) {
       if (segmentHitsBox(a, b, c, yPad)) return true;
@@ -245,7 +370,6 @@ export class World {
     return false;
   }
 
-  // Ground height at (x,z): ramps interpolate, platforms cap, else 0.
   groundHeight(x, z) {
     let h = 0;
     for (const r of this.ramps) {
@@ -274,8 +398,6 @@ export class World {
     return h;
   }
 
-  // AABB slide: try to move a box (half extents hx,hz, height) from (x,y,z)
-  // by (dx,dz); returns the allowed position. y is the feet position.
   moveBox(x, y, z, dx, dz, hx, hz, height) {
     let nx = x + dx, nz = z + dz;
     const overlaps = (px, pz) => this.colliders.some((c) =>
@@ -300,8 +422,6 @@ export class World {
 }
 
 export function segmentHitsBox(a, b, c, yPad = 0) {
-  // Slab method on the segment; yPad shrinks the box vertically so a
-  // low wall (barrier) does not block a standing eye-line.
   const minX = c.minX, maxX = c.maxX;
   const minY = c.minY + yPad, maxY = c.maxY - yPad;
   const minZ = c.minZ, maxZ = c.maxZ;

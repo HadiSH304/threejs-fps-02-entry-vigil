@@ -9,7 +9,7 @@ export class SoundBank {
     this.ctx = null;
     this.master = null;
     this.noiseBuf = null;
-    this.flashRing = null; // active tinnitus oscillator, if any
+    this.flashRing = null;
     this.stepPhase = 0;
   }
 
@@ -21,7 +21,6 @@ export class SoundBank {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
-    // 1 s of white noise, reused by every noise-based sound.
     const len = this.ctx.sampleRate;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noiseBuf.getChannelData(0);
@@ -58,7 +57,6 @@ export class SoundBank {
     o.start(t); o.stop(t + dur + 0.05);
   }
 
-  // distance in metres attenuates volume and low-passes the crack.
   shot(kind, distance = 0) {
     if (!this.ctx) return;
     const att = 1 / (1 + distance * 0.09);
@@ -82,7 +80,6 @@ export class SoundBank {
     }
   }
 
-  // Metallic dink for headshots, dull thud for body hits.
   hit(headshot) {
     if (!this.ctx) return;
     if (headshot) { this._tone(2350, 0.09, 'sine', 0.5); this._tone(3120, 0.06, 'sine', 0.3, 0.01); }
@@ -98,7 +95,6 @@ export class SoundBank {
   }
   dryFire() { this._tone(1100, 0.03, 'square', 0.12); }
   step(speedFrac) {
-    // Footsteps scale with speed: faster movement, louder + quicker steps.
     if (!this.ctx || speedFrac < 0.05) return;
     this.stepPhase += speedFrac;
     if (this.stepPhase < 0.55) return;
@@ -110,7 +106,6 @@ export class SoundBank {
     this._tone(4200, 0.4, 'sine', 0.4, 0, 3800);
     this._noise(0.25, 'highpass', 3000, 0.3);
   }
-  // Tinnitus ring that decays over ~3 s after a flashbang.
   ring(seconds = 3) {
     if (!this.ctx) return;
     this.stopRing();

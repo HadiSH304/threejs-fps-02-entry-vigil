@@ -17,38 +17,26 @@ export function makeWeaponState(def) {
     reloading: false,
     reloadEnd: 0,
     lastShot: -10,
-    bloom: 0,          // accumulated spread from firing (radians)
-    patternIndex: 0,   // shots since the last recovery reset
+    bloom: 0,
+    patternIndex: 0,
     lastRecovery: 0,
     cooldown: 0,
   };
 }
 
-// Current spread in radians for a shooter moving at speedFrac (0..1 of
-// max speed), crouched or airborne.
 export function currentSpread(state, speedFrac, crouched, airborne) {
   const def = state.def;
   let mult = 1;
   if (airborne) mult *= ACCURACY.airMult;
   else {
-    // Movement penalty: linear up to ~27x at full run speed.
     mult *= 1 + speedFrac * (ACCURACY.moveMultMax - 1);
     if (crouched) mult *= ACCURACY.crouchMult;
   }
   return def.baseSpread * mult + state.bloom;
 }
 
-// A stopped first shot is near-perfect: spread below the deadzone speed
-// threshold is just base spread + bloom (bloom is 0 before the first shot).
-export function isAccurate(speedFrac) {
-  return speedFrac < ACCURACY.deadzoneFrac;
-}
-
-// Deterministic recoil pattern offset for the n-th shot of a spray
-// (n = 0-based). Returns {pitch, yaw} in radians of camera kick.
-// Shape: climb for 1-10, S-swing for 11-20, wide sweeps for 21-30.
 export function recoilOffset(def, n) {
-  const k = def.recoil / 30; // normalize to the AK-scale kick scalar
+  const k = def.recoil / 30;
   let pitch, yaw;
   if (n < 10) {
     pitch = (0.010 + n * 0.0022) * k;
@@ -63,15 +51,12 @@ export function recoilOffset(def, n) {
   return { pitch, yaw };
 }
 
-// Per-frame update: bloom decays once the recovery timer has elapsed
-// since the last shot; the pattern index resets with it.
 export function updateWeapon(state, now, crouched) {
-  const rec = state.def.recovery * (crouched ? 0.83 : 1); // 0.305 vs 0.368 s
+  const rec = state.def.recovery * (crouched ? 0.83 : 1);
   if (now - state.lastShot > rec) {
     state.bloom = 0;
     state.patternIndex = 0;
   } else {
-    // Bloom decays exponentially toward 0 while the timer runs.
     state.bloom *= Math.exp(-(1 / 60) / rec * 2.2);
   }
   if (state.reloading && now >= state.reloadEnd) {

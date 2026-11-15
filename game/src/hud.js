@@ -12,11 +12,15 @@ export class HUD {
       'timer', 'score-jackals', 'score-wardens', 'round-label', 'feed', 'radar', 'buy-menu',
       'scoreboard', 'deploy', 'aar', 'flash', 'damage-vignette', 'hint', 'plant-bar',
       'plant-fill', 'plant-label', 'center-msg', 'map-name', 'wave-label', 'deploy-map',
-      'sens', 'sens-val', 'deploy-title', 'deploy-sub']) {
+      'sens', 'sens-val', 'deploy-title', 'deploy-sub', 'radio', 'slots', 'utility',
+      'plan-label', 'buy-plan']) {
       this.el[id] = doc.getElementById(id);
     }
     this.radarCtx = this.el.radar?.getContext('2d');
     this.feedItems = [];
+    this.radioItems = [];
+    this.blips = [];
+    this.staging = new URLSearchParams(doc.location?.search ?? '').get('shot') != null;
   }
 
   setCrosshair(spreadPx, visible) {
@@ -31,7 +35,7 @@ export class HUD {
     const h = this.el.hitmarker;
     if (!h) return;
     h.classList.remove('on', 'hs');
-    void h.offsetWidth; // restart the flash
+    void h.offsetWidth;
     h.classList.add('on');
     if (headshot) h.classList.add('hs');
     setTimeout(() => h.classList.remove('on'), 120);
@@ -72,8 +76,51 @@ export class HUD {
     this.el.feed.prepend(div);
     this.feedItems.push(div);
     while (this.feedItems.length > 5) this.feedItems.shift().remove();
-    setTimeout(() => div.classList.add('fade'), 4200);
-    setTimeout(() => div.remove(), 5200);
+    if (!this.staging) {
+      setTimeout(() => div.classList.add('fade'), 4200);
+      setTimeout(() => div.remove(), 5200);
+    }
+  }
+
+  // Radio feed: squad callouts (radio.js), newest on top, team-colored.
+  radio(line) {
+    const box = this.el.radio;
+    if (!box) return;
+    const div = this.doc.createElement('div');
+    div.className = `radio-item ${line.team === 'attack' ? 'atk' : 'def'}`;
+    div.textContent = `RADIO ${line.text}`;
+    box.prepend(div);
+    this.radioItems.push(div);
+    while (this.radioItems.length > 3) this.radioItems.shift().remove();
+    if (!this.staging) {
+      setTimeout(() => div.classList.add('fade'), 5600);
+      setTimeout(() => div.remove(), 6800);
+    }
+  }
+
+  setBlips(blips) { this.blips = blips ?? []; }
+
+  // Weapon-slot bar: 1 rifle / 2 sidearm / 3 knife with names; active lit.
+  setSlots(loadout, activeSlot) {
+    const bar = this.el.slots;
+    if (!bar) return;
+    const names = { 1: loadout[1]?.def.name ?? '—', 2: loadout[2]?.def.name ?? '—', 3: loadout[3]?.def.name ?? '—' };
+    bar.innerHTML = [1, 2, 3].map((n) =>
+      `<span class="${n === activeSlot ? 'sel' : ''}"><b>${n}</b> ${names[n]}</span>`).join('');
+  }
+
+  // Utility counts: smoke / flash / frag remaining (Q smoke, G flash).
+  setUtility(utility) {
+    const u = this.el.utility;
+    if (!u) return;
+    u.textContent = `SMOKE ${utility.smoke ?? 0} · FLASH ${utility.flash ?? 0} · FRAG ${utility.frag ?? 0}`;
+  }
+
+  // Round plan label (topbar + buy menu share the text).
+  setPlan(plan) {
+    const label = plan ? `PLAN: ${plan.name} — ${plan.desc}` : '';
+    if (this.el['plan-label']) this.el['plan-label'].textContent = label;
+    if (this.el['buy-plan']) this.el['buy-plan'].textContent = label;
   }
 
   centerMsg(text, ms = 2200) {
@@ -112,7 +159,6 @@ export class HUD {
   }
 
   damageFlash(fromAngle) {
-    // Red vignette + a directional arc pointing at the shooter.
     const v = this.el['damage-vignette'];
     if (!v) return;
     v.style.setProperty('--dir', `${fromAngle}deg`);
@@ -123,8 +169,9 @@ export class HUD {
   }
 
   // Mini-radar: top-down dots — player (center, white), teammates (green),
-  // enemies (red, only when recently seen), sites (amber letters).
-  drawRadar(player, bots, sites, mapDef, seenEnemies) {
+  // enemies (red, only when recently seen), sites (amber letters), and
+  // pulsing amber rings where a radio callout just landed.
+  drawRadar(player, bots, sites, mapDef, seenEnemies, now = 0) {
     const ctx = this.radarCtx;
     if (!ctx) return;
     const S = 132, pad = 8;
@@ -134,18 +181,22 @@ export class HUD {
     ctx.fillRect(0, 0, S, S);
     const sx = (x) => pad + ((x + W / 2) / W) * (S - pad * 2);
     const sz = (z) => pad + ((z + D / 2) / D) * (S - pad * 2);
-    // Walls.
     ctx.fillStyle = 'rgba(160,170,180,0.5)';
     for (const s of mapDef.solids) {
       if (s.ramp || s.y0 > 0) continue;
       if (s.h < 2) continue;
       ctx.fillRect(sx(s.x - s.w / 2), sz(s.z - s.d / 2), (s.w / W) * (S - pad * 2), (s.d / D) * (S - pad * 2));
     }
-    // Sites.
     ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
     for (const site of sites) {
       ctx.fillStyle = '#ffb020';
       ctx.fillText(site.id, sx(site.x), sz(site.z) + 4);
+    }
+    for (const b of this.blips) {
+      const age = Math.max(0, 5 - (b.until - now));
+      ctx.strokeStyle = `rgba(255,176,32,${Math.max(0.15, 0.9 - age * 0.18)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx(b.x), sz(b.z), 4 + age * 3, 0, Math.PI * 2); ctx.stroke();
     }
     const dot = (x, z, color, r = 3) => {
       ctx.fillStyle = color;
@@ -156,7 +207,6 @@ export class HUD {
       if (b.team === player.team) dot(b.pos.x, b.pos.z, '#7ee787');
       else if (seenEnemies.has(b)) dot(b.pos.x, b.pos.z, '#ff5a4a', 3.5);
     }
-    // Player arrow, rotated by yaw.
     ctx.save();
     ctx.translate(sx(player.pos.x), sz(player.pos.z));
     ctx.rotate(Math.PI - player.yaw);
@@ -205,7 +255,6 @@ export class HUD {
     this.el['sens-val'].textContent = sensitivity.toFixed(2);
   }
 
-  // After-Action Report with the published composite rank.
   showAAR(show, stats) {
     const a = this.el.aar;
     if (!a) return;
@@ -220,8 +269,7 @@ export class HUD {
     set('aar-util', `${stats.utilityPoints} / 10`);
     set('aar-score', `${stats.total} / 100`);
     set('aar-kd', `${stats.kills}K / ${stats.deaths}D`);
+    set('aar-radio', `${stats.radioCalls ?? 0} callouts`);
     set('aar-breakdown', stats.breakdown);
   }
-
-  show(el, visible) { if (el) el.classList.toggle('hidden', !visible); }
 }

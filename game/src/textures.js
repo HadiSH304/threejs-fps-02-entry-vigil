@@ -42,7 +42,7 @@ export function buildTextures() {
       for (let j = 0; j < 5; j++) { x += (Math.random() - 0.5) * 60; y += (Math.random() - 0.5) * 60; g.lineTo(x, y); }
       g.stroke();
     }
-    g.strokeStyle = 'rgba(30,32,34,0.7)'; g.lineWidth = 3; // expansion joints
+    g.strokeStyle = 'rgba(30,32,34,0.7)'; g.lineWidth = 3;
     g.strokeRect(1, 1, s - 2, s - 2);
     g.beginPath(); g.moveTo(s / 2, 0); g.lineTo(s / 2, s); g.stroke();
     g.beginPath(); g.moveTo(0, s / 2); g.lineTo(s, s / 2); g.stroke();
@@ -51,7 +51,7 @@ export function buildTextures() {
   T.asphalt = canvasTexture(256, (g, s) => {
     g.fillStyle = '#3d4045'; g.fillRect(0, 0, s, s);
     speckle(g, s, 4200, ['#2e3134', '#4a4e53', '#565a5f', '#232628'], 0.2, 0.55);
-    g.strokeStyle = 'rgba(210,170,60,0.55)'; g.lineWidth = 5; // faded lane paint
+    g.strokeStyle = 'rgba(210,170,60,0.55)'; g.lineWidth = 5;
     g.setLineDash([26, 22]);
     g.beginPath(); g.moveTo(s / 2, 0); g.lineTo(s / 2, s); g.stroke();
     g.setLineDash([]);
@@ -60,8 +60,8 @@ export function buildTextures() {
   T.wall = canvasTexture(256, (g, s) => {
     g.fillStyle = '#7d7a6e'; g.fillRect(0, 0, s, s);
     speckle(g, s, 1800, ['#6e6b60', '#8b877a', '#65625a'], 0.12, 0.4);
-    g.fillStyle = 'rgba(52,54,58,0.85)'; g.fillRect(0, s - 14, s, 14); // grime skirting
-    g.fillStyle = 'rgba(220,120,40,0.5)'; g.fillRect(0, 0, s, 5); // hazard top edge
+    g.fillStyle = 'rgba(52,54,58,0.85)'; g.fillRect(0, s - 14, s, 14);
+    g.fillStyle = 'rgba(220,120,40,0.5)'; g.fillRect(0, 0, s, 5);
   }, [3, 1]);
 
   T.plywood = canvasTexture(256, (g, s) => {
@@ -93,6 +93,51 @@ export function buildTextures() {
     g.fillText('VIGIL', s / 2, s / 2 + 12);
   }, [1, 1]);
 
+  T.brick = canvasTexture(256, (g, s) => {
+    g.fillStyle = '#8a5a44'; g.fillRect(0, 0, s, s);
+    const bh = 32, bw = 64;
+    for (let y = 0; y < s; y += bh) {
+      const off = (y / bh) % 2 === 0 ? 0 : bw / 2;
+      for (let x = -bw; x < s; x += bw) {
+        const shade = 120 + ((Math.random() * 50) | 0);
+        g.fillStyle = `rgb(${shade + 18},${(shade * 0.62) | 0},${(shade * 0.5) | 0})`;
+        g.fillRect(x + off + 2, y + 2, bw - 4, bh - 4);
+      }
+    }
+    speckle(g, s, 900, ['#5a3a2c', '#a87a5e', '#6e4636'], 0.15, 0.45);
+    g.fillStyle = 'rgba(40,26,18,0.5)'; g.fillRect(0, s - 18, s, 18);
+  }, [4, 1]);
+
+  T.cobble = canvasTexture(256, (g, s) => {
+    g.fillStyle = '#4a4238'; g.fillRect(0, 0, s, s);
+    for (let y = 0; y < 4; y++) { // worn cobble rows
+      for (let x = 0; x < 4; x++) {
+        const shade = 95 + ((Math.random() * 45) | 0);
+        g.fillStyle = `rgb(${shade},${(shade * 0.92) | 0},${(shade * 0.8) | 0})`;
+        g.beginPath();
+        g.ellipse(x * 64 + 32, y * 64 + 32, 28, 26, 0, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    speckle(g, s, 1400, ['#2e2822', '#6e6252', '#7a6e5c'], 0.2, 0.5);
+    g.strokeStyle = 'rgba(230,150,50,0.4)'; g.lineWidth = 4;
+    g.setLineDash([30, 26]);
+    g.beginPath(); g.moveTo(s / 2, 0); g.lineTo(s / 2, s); g.stroke();
+    g.setLineDash([]);
+  }, [7, 6]);
+
+  T.hazard = canvasTexture(256, (g, s) => {
+    g.fillStyle = '#c8a028'; g.fillRect(0, 0, s, s);
+    g.fillStyle = '#1c1c1c';
+    for (let i = -2; i < 6; i++) { // diagonal hazard stripes
+      g.beginPath();
+      g.moveTo(i * 64, s); g.lineTo(i * 64 + 32, s);
+      g.lineTo(i * 64 + 64, 0); g.lineTo(i * 64 + 32, 0);
+      g.closePath(); g.fill();
+    }
+    speckle(g, s, 400, ['#8a7018', '#3a3a3a'], 0.2, 0.5);
+  }, [1, 1]);
+
   T.metal = canvasTexture(256, (g, s) => {
     g.fillStyle = '#4c565e'; g.fillRect(0, 0, s, s);
     for (let x = 0; x < s; x += 8) { // brushed metal
@@ -100,7 +145,7 @@ export function buildTextures() {
       g.fillRect(x, 0, 3, s);
     }
     speckle(g, s, 500, ['#39424a', '#5d6a74'], 0.2, 0.5);
-    g.fillStyle = 'rgba(200,90,30,0.7)'; // hazard chevrons
+    g.fillStyle = 'rgba(200,90,30,0.7)';
     for (let i = -1; i < 5; i++) {
       g.beginPath();
       g.moveTo(i * 64, s); g.lineTo(i * 64 + 32, s); g.lineTo(i * 64 + 64, s - 40); g.lineTo(i * 64 + 32, s - 40);

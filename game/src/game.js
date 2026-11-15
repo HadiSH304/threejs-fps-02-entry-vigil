@@ -3,24 +3,24 @@
 // Report. Rendering, input and bot meshes live in main.js / bots.js; this
 // module only decides what happens and when, so the soak test can drive it
 // headlessly through the same code path the browser uses.
-//
 // Economy (CS2, per player): start $800; win $3,250 elimination / $3,500
-// objective; loss ladder $1,400 then +$500 per consecutive loss to $3,400
-// (drops one step on a win); planter +$800, team +$300 on plant;
-// planted-but-lost +$600 to each attacker; defuser +$300; kill rewards by
-// weapon (rifle/pistol $300, SMG $600, knife $1,500).
+// objective; loss ladder $1,400 then +$500 per loss to $3,400; planter
+// +$800, team +$300 on plant; planted-but-lost +$600 each attacker;
+// defuser +$300; kill rewards by weapon (rifle/pistol $300, SMG $600,
+// knife $1,500). Team plans (plans.js) are picked per round in startRound.
 
 import { GAME, ECONOMY, RANK, SHOP, WEAPONS } from './config.js';
 import { nearestSite } from './bots.js';
+import { pickAttackPlan, pickDefendSetup, attackRoutes, defendRoutes, assignPlan } from './plans.js';
 
 export const PHASES = ['deploy', 'buy', 'live', 'roundEnd', 'matchEnd'];
 
 export class Match {
   constructor(opts) {
-    this.world = opts.world;       // set per map by main.js
+    this.world = opts.world;
     this.player = opts.player;
-    this.spawnBot = opts.spawnBot; // (team, index, spawn, wave, weaponId) => Bot
-    this.onEvent = opts.onEvent;   // (event) => void, for HUD/sound/visuals
+    this.spawnBot = opts.spawnBot;
+    this.onEvent = opts.onEvent;
     this.phase = 'deploy';
     this.mapIndex = 0;
     this.wave = 1;
@@ -30,7 +30,7 @@ export class Match {
     this.lossStreak = { attack: 0, defend: 0 };
     this.bots = [];
     this.charge = { planted: false, site: null, timer: 0, planter: null };
-    this.phaseT = 0;   // seconds left in the current phase
+    this.phaseT = 0;
     this.roundT = 0;
     this.matchStart = 0;
     this.now = 0;
@@ -43,6 +43,9 @@ export class Match {
     this.roundReason = '';
     this.matchWinner = null;
     this.over = false;
+    this.attackPlan = null;
+    this.defendPlan = null;
+    this.plan = null;
   }
 
   freshStats() {
@@ -50,13 +53,12 @@ export class Match {
       shots: 0, hits: 0, headshotKills: 0, kills: 0, deaths: 0,
       damageDealt: 0, damageTaken: 0, utilityDeployed: 0,
       enemiesBlinded: 0, smokeDenials: 0, plants: 0, defuses: 0,
-      roundsWon: 0,
+      roundsWon: 0, radioCalls: 0,
     };
   }
 
   emit(type, data = {}) { this.onEvent({ type, ...data }); }
 
-  // --- match lifecycle -------------------------------------------------
   startMatch(mapIndex, now) {
     this.mapIndex = mapIndex;
     this.round = 0;
@@ -83,14 +85,17 @@ export class Match {
     this.plantProgress = 0;
     this.botDefuseProgress = 0;
     this.seenEnemies.clear();
-    // Respawn everyone: player + 4 teammates vs 5 enemies.
+    // Both teams pick a plan for this round (rotates by round number);
+    // the player's team plan is the one the HUD names.
+    this.attackPlan = pickAttackPlan(this.round);
+    this.defendPlan = pickDefendSetup(this.round);
+    this.plan = this.playerTeam === 'attack' ? this.attackPlan : this.defendPlan;
     this.respawnAll();
-    this.emit('roundStart', { round: this.round });
+    this.emit('roundStart', { round: this.round, plan: this.plan });
   }
 
   respawnAll() {
     const map = this.world.def;
-    // Clear old bots (main.js disposes their meshes).
     for (const b of this.bots) this.emit('removeBot', { bot: b });
     this.bots = [];
     const atkSpawns = this.playerTeam === 'attack' ? map.spawns.attack : map.spawns.defend;
@@ -102,52 +107,41 @@ export class Match {
     this.player.yaw = this.playerTeam === 'attack' ? Math.PI / 2 : -Math.PI / 2;
     this.player.pitch = 0;
     this.player.vel.set(0, 0, 0);
-    // Teammates: 4 bots on the player's side, one carries the charge when
-    // the player is defending (player carries it on attack).
     const teamWeapons = ['kestrel', 'bastion', 'raptor', 'kestrel'];
     for (let i = 0; i < 4; i++) {
       const bot = this.spawnBot(this.playerTeam, i, atkSpawns[i + 1], this.wave, teamWeapons[i]);
       bot.armor = 100; bot.helmet = true;
-      if (this.playerTeam === 'defend' && i === 0) bot.carrier = true;
       this.bots.push(bot);
     }
     const enemyWeapons = ['kestrel', 'bastion', 'raptor', 'bastion', 'kestrel'];
     for (let i = 0; i < 5; i++) {
       const bot = this.spawnBot(this.playerTeam === 'attack' ? 'defend' : 'attack', i, defSpawns[i], this.wave, enemyWeapons[i]);
       bot.armor = 100; bot.helmet = true;
-      if (this.playerTeam === 'defend' && i === 0) bot.carrier = true;
       this.bots.push(bot);
     }
+    // Team plans: every bot gets a role and a route for this round. The
+    // attacking team's first bot carries the charge when the player is
+    // defending (the player carries it on attack).
+    const atkBots = this.bots.filter((b) => b.team === 'attack');
+    const defBots = this.bots.filter((b) => b.team === 'defend');
+    assignPlan(atkBots, attackRoutes(map, this.attackPlan, this.round), this.playerTeam === 'defend' ? 0 : -1);
+    assignPlan(defBots, defendRoutes(map, this.defendPlan), -1);
     this.emit('respawned');
   }
 
-  // --- economy ----------------------------------------------------------
   buy(key) {
     if (this.phase !== 'buy') return { ok: false, why: 'Buy phase is over' };
     const p = this.player;
-    if (key === 'armor' || key === 'helmet') {
-      const price = SHOP[key].price;
-      if (p.money < price) return { ok: false, why: 'Not enough money' };
+    const item = SHOP[key];
+    if (item) {
+      if (p.money < item.price) return { ok: false, why: 'Not enough money' };
       if (key === 'armor' && p.armor >= 100) return { ok: false, why: 'Armor already full' };
       if (key === 'helmet' && p.helmet) return { ok: false, why: 'Already have a helmet' };
-      p.money -= price;
-      p.armor = 100;
-      if (key === 'helmet') p.helmet = true;
-      this.emit('bought', { key });
-      return { ok: true };
-    }
-    if (key === 'kit') {
-      if (p.hasKit) return { ok: false, why: 'Already have a kit' };
-      if (p.money < SHOP.kit.price) return { ok: false, why: 'Not enough money' };
-      p.money -= SHOP.kit.price;
-      p.hasKit = true;
-      this.emit('bought', { key });
-      return { ok: true };
-    }
-    if (key === 'smoke' || key === 'flash' || key === 'frag') {
-      if (p.money < SHOP[key].price) return { ok: false, why: 'Not enough money' };
-      p.money -= SHOP[key].price;
-      p.utility[key] = (p.utility[key] ?? 0) + 1;
+      if (key === 'kit' && p.hasKit) return { ok: false, why: 'Already have a kit' };
+      p.money -= item.price;
+      if (key === 'armor' || key === 'helmet') { p.armor = 100; if (key === 'helmet') p.helmet = true; }
+      else if (key === 'kit') p.hasKit = true;
+      else p.utility[key] = (p.utility[key] ?? 0) + 1;
       this.emit('bought', { key });
       return { ok: true };
     }
@@ -159,7 +153,6 @@ export class Match {
     return { ok: true };
   }
 
-  // --- round flow --------------------------------------------------------
   update(dt, now) {
     this.now = now;
     if (this.phase === 'buy') {
@@ -174,7 +167,6 @@ export class Match {
       } else if (this.roundT <= 0) {
         return this.endRound('defend', 'Time expired — site held');
       }
-      // Elimination check.
       const atkAlive = this.aliveCount('attack');
       const defAlive = this.aliveCount('defend');
       if (atkAlive === 0) return this.endRound('defend', 'Team eliminated');
@@ -200,7 +192,6 @@ export class Match {
   }
 
   botDefuseTick(dt) {
-    // A defending bot defuses when it stands on the planted site unopposed.
     const site = this.charge.site;
     if (!site) return;
     const near = this.bots.find((b) => b.alive && b.team === 'defend' &&
@@ -210,6 +201,7 @@ export class Match {
       (this.player.alive && this.player.team === 'attack' &&
         Math.hypot(this.player.pos.x - site.x, this.player.pos.z - site.z) < 9);
     if (near && !threat) {
+      if (this.botDefuseProgress === 0) this.emit('defuseStart', { site, bot: near });
       this.botDefuseProgress += dt;
       if (this.botDefuseProgress >= GAME.defuseSeconds) {
         this.charge.planted = false;
@@ -220,8 +212,6 @@ export class Match {
     }
   }
 
-  // Player plant/defuse channel. holdE true while E is held. Returns the
-  // current progress (0..1) or null when not channeling.
   channel(dt, holdE, moving) {
     if (this.phase !== 'live') return null;
     const p = this.player;
@@ -263,7 +253,6 @@ export class Match {
   plantCharge(site, planter) {
     this.charge = { planted: true, site, timer: GAME.chargeSeconds, planter };
     this.stats.plants++;
-    // Planter +$800, whole attacking team +$300.
     if (planter === this.player) this.player.money = Math.min(16000, this.player.money + ECONOMY.plantPlanter);
     this.player.money = Math.min(16000, this.player.money + ECONOMY.plantTeam);
     this.emit('planted', { site });
@@ -291,7 +280,6 @@ export class Match {
     this.roundWinner = winner;
     this.roundReason = reason;
     const playerWon = winner === this.playerTeam;
-    // Economy.
     if (playerWon) {
       this.player.money = Math.min(16000, this.player.money + (objective ? ECONOMY.winObjective : ECONOMY.winElimination));
       this.stats.roundsWon++;
@@ -307,14 +295,12 @@ export class Match {
     this.phase = 'roundEnd';
     this.phaseT = 5;
     this.emit('roundEnd', { winner, reason, score: { ...this.score }, playerWon });
-    // Halftime after round 8: swap sides, reset money like a new half.
     if (this.round === GAME.halftimeAfterRound) {
       this.playerTeam = this.playerTeam === 'attack' ? 'defend' : 'attack';
       this.player.money = GAME.startMoney;
       this.lossStreak = { attack: 0, defend: 0 };
       this.emit('halftime', { newSide: this.playerTeam });
     }
-    // Match end: first to 9; past round 16 the leader after a round wins.
     const leader = this.score.attack > this.score.defend ? 'attack' : this.score.defend > this.score.attack ? 'defend' : null;
     if (this.score.attack >= GAME.roundsToWin || this.score.defend >= GAME.roundsToWin ||
         (this.round >= GAME.maxRounds && leader)) {
@@ -350,7 +336,7 @@ export class Match {
       damageDealt: Math.round(s.damageDealt), damageTaken: Math.round(s.damageTaken),
       utilityPoints: Math.round(utilPts * 10) / 10,
       total: Math.round(total * 10) / 10,
-      rank, kills: s.kills, deaths: s.deaths,
+      rank, kills: s.kills, deaths: s.deaths, radioCalls: s.radioCalls,
       breakdown: `ACC ${accPts.toFixed(1)}/40 · HS ${hsPts.toFixed(1)}/25 · DMG ${exPts.toFixed(1)}/15 · UTIL ${utilPts.toFixed(1)}/10 · SPD ${speedPts.toFixed(1)}/10`,
     };
   }
