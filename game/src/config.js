@@ -1,0 +1,237 @@
+// VIGIL // FOUNDRY — shared configuration.
+// All numbers are the game's single source of truth: weapons, economy,
+// timers and both map layouts live here so the judge (and the soak test)
+// can read the whole design from one file. Units are metres and seconds.
+
+export const GAME = {
+  title: 'VIGIL // FOUNDRY',
+  teams: { attack: 'Ember Jackals', defend: 'Harbor Wardens' },
+  playersPerTeam: 5,
+  roundsToWin: 9,
+  maxRounds: 16,
+  halftimeAfterRound: 8,
+  buySeconds: 20,
+  roundSeconds: 100,
+  plantSeconds: 3.2,
+  chargeSeconds: 40,
+  defuseSeconds: 10,
+  defuseKitSeconds: 5,
+  startMoney: 800,
+  moneyCap: 16000,
+};
+
+// Weapons. Damage numbers are CS-calibrated (see damage.js for the model):
+// Kestrel-7 chest vs armor 36 x 0.775 = 27.9 (4 shots), bare chest 36 (3),
+// head vs helmet 36 x 4 x 0.775 = 111.6 (lethal). Bastion-4 head vs helmet
+// 33 x 4 x 0.70 = 92.4 (NOT lethal). Anvil .50 armored chest 53 x 0.932 =
+// 49.4, two shots 98.8 (just short of a kill).
+export const WEAPONS = {
+  kestrel: {
+    id: 'kestrel', name: 'Kestrel-7', slot: 1, kind: 'rifle',
+    damage: 36, hsMult: 4.0, pen: 0.775, falloff: 0.02, rpm: 600,
+    mag: 30, reserveMags: 3, reload: 2.6, price: 2700, killReward: 300,
+    auto: true, moveSpeed: 5.45, baseSpread: 0.0064, recovery: 0.368,
+    recoil: 30.0, tracer: 0xffc46b, sound: 'rifle',
+  },
+  bastion: {
+    id: 'bastion', name: 'Bastion-4', slot: 1, kind: 'rifle',
+    damage: 33, hsMult: 4.0, pen: 0.70, falloff: 0.03, rpm: 666,
+    mag: 30, reserveMags: 3, reload: 2.5, price: 2900, killReward: 300,
+    auto: true, moveSpeed: 5.7, baseSpread: 0.0058, recovery: 0.339,
+    recoil: 23.0, tracer: 0x9fd8ff, sound: 'rifle',
+  },
+  raptor: {
+    id: 'raptor', name: 'Raptor-9', slot: 1, kind: 'smg',
+    damage: 26, hsMult: 4.0, pen: 0.65, falloff: 0.13, rpm: 857,
+    mag: 30, reserveMags: 4, reload: 2.2, price: 1500, killReward: 600,
+    auto: true, moveSpeed: 6.1, baseSpread: 0.0085, recovery: 0.30,
+    recoil: 16.0, tracer: 0xffe08a, sound: 'smg',
+  },
+  hinge: {
+    id: 'hinge', name: 'Hinge P9', slot: 2, kind: 'pistol',
+    damage: 34, hsMult: 4.0, pen: 0.705, falloff: 0.09, rpm: 400,
+    mag: 15, reserveMags: 4, reload: 1.9, price: 0, killReward: 300,
+    auto: false, moveSpeed: 6.1, baseSpread: 0.0075, recovery: 0.30,
+    recoil: 14.0, tracer: 0xd8d8d8, sound: 'pistol',
+  },
+  anvil: {
+    id: 'anvil', name: 'Anvil .50', slot: 2, kind: 'pistol',
+    damage: 53, hsMult: 3.9, pen: 0.932, falloff: 0.15, rpm: 267,
+    mag: 7, reserveMags: 4, reload: 2.3, price: 700, killReward: 300,
+    auto: false, moveSpeed: 5.85, baseSpread: 0.0068, recovery: 0.811,
+    recoil: 26.0, tracer: 0xffb060, sound: 'heavy',
+  },
+  talon: {
+    id: 'talon', name: 'Talon', slot: 3, kind: 'knife',
+    damage: 60, hsMult: 1.0, pen: 0.85, falloff: 0, rpm: 150,
+    mag: Infinity, reserveMags: 0, reload: 0, price: 0, killReward: 1500,
+    auto: false, moveSpeed: 6.35, baseSpread: 0, recovery: 0.2,
+    recoil: 0, range: 2.2, tracer: 0xffffff, sound: 'knife',
+  },
+};
+
+export const ECONOMY = {
+  winElimination: 3250,
+  winObjective: 3500,
+  lossBonus: [1400, 1900, 2400, 2900, 3400], // ladder by consecutive losses
+  plantPlanter: 800,
+  plantTeam: 300,
+  plantedButLost: 600, // each attacker
+  defuseBonus: 300,
+};
+
+export const SHOP = {
+  armor: { name: 'Kevlar Vest', price: 650 },
+  helmet: { name: 'Kevlar + Helmet', price: 1000 },
+  kit: { name: 'Defuse Kit', price: 400 },
+  smoke: { name: 'Smoke Grenade', price: 300 },
+  flash: { name: 'Flashbang', price: 200 },
+  frag: { name: 'Frag Grenade', price: 300 },
+};
+
+// Accuracy model (CS2-derived): standing base spread per weapon; full-run
+// movement multiplies spread ~27x; crouch x0.75; jumping shots are wild.
+export const ACCURACY = {
+  moveMultMax: 27,
+  crouchMult: 0.75,
+  airMult: 3.5,
+  deadzoneFrac: 0.275, // below 27.5% of max speed the weapon is accurate
+};
+
+// AAR composite (published in the deploy screen and the report):
+// accuracy 40 / headshot share 25 / damage exchange 15 / utility 10 / speed 10.
+export const RANK = {
+  sPlus: { total: 88, acc: 0.40, hs: 0.45 },
+  s: { total: 74, acc: 0.35, hs: 0.40 },
+  a: 58, b: 40,
+};
+
+// ---------------------------------------------------------------- maps
+// One data-driven layout format. Every entry is a solid box
+// {x, z, w, d, h, y0, mat} (y0 defaults to 0) or a ramp
+// {ramp: 1, x, z, w, len, dir, y0, y1} or a prop. The world builder turns
+// these arrays into meshes, AABB colliders, spawn points, plant sites and
+// a waypoint graph — the same builder and the same plant/defuse system
+// serve both maps.
+
+export const MAPS = [
+  {
+    id: 'killhouse',
+    name: 'Killhouse',
+    tag: 'Map 01 — Indoor CQB',
+    outdoor: false,
+    fog: [0x11141a, 26, 60],
+    ground: { w: 38, d: 30, mat: 'concrete' },
+    sky: 0x0b0d11,
+    ambient: 0x8a94a8,
+    sun: { color: 0xfff2d8, intensity: 0.35, pos: [10, 18, 6] },
+    // Fluorescent ceiling panels (emissive) + a few point lights.
+    ceiling: { y: 4.2, panels: [[-12, -8], [0, -8], [12, -8], [-12, 0], [0, 0], [12, 0], [-12, 8], [0, 8], [12, 8]] },
+    solids: [
+      // Perimeter (h 4.2, thickness 0.6).
+      { x: 0, z: -15.3, w: 38.6, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: 0, z: 15.3, w: 38.6, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: -19.3, z: 0, w: 0.6, d: 30.6, h: 4.2, mat: 'wall' },
+      { x: 19.3, z: 0, w: 0.6, d: 30.6, h: 4.2, mat: 'wall' },
+      // Central spine: tight hallways + 90-degree blind corners.
+      { x: -6, z: -6, w: 0.6, d: 12, h: 4.2, mat: 'wall' },
+      { x: -6, z: 6, w: 0.6, d: 6, h: 4.2, mat: 'wall' },
+      { x: 6, z: -3, w: 0.6, d: 12, h: 4.2, mat: 'wall' },
+      { x: 6, z: 9, w: 0.6, d: 6, h: 4.2, mat: 'wall' },
+      { x: -12, z: 0, w: 12, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: 12, z: 0, w: 12, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: 0, z: -10, w: 12, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: -2, z: 11, w: 8, d: 0.6, h: 4.2, mat: 'wall' },
+      // Breach doorways: short wall stubs that leave a 1.4 m gap.
+      { x: -14, z: -10, w: 4, d: 0.6, h: 4.2, mat: 'wall' },
+      { x: 14, z: 10, w: 4, d: 0.6, h: 4.2, mat: 'wall' },
+      // Waist-high plywood barriers (h 1.1, crouch/peek cover).
+      { x: -2, z: -4, w: 3.2, d: 0.4, h: 1.1, mat: 'plywood' },
+      { x: 3, z: 4, w: 3.2, d: 0.4, h: 1.1, mat: 'plywood' },
+      { x: -11, z: 6, w: 0.4, d: 3.2, h: 1.1, mat: 'plywood' },
+      { x: 11, z: -6, w: 0.4, d: 3.2, h: 1.1, mat: 'plywood' },
+      { x: 0, z: 13, w: 4, d: 0.4, h: 1.1, mat: 'plywood' },
+      // Pop-up target lanes: paper targets on stands down the east lane.
+      { x: 16, z: -10, w: 0.2, d: 1.6, h: 1.8, y0: 0.0, mat: 'target' },
+      { x: 16, z: -4, w: 0.2, d: 1.6, h: 1.8, mat: 'target' },
+      { x: 16, z: 2, w: 0.2, d: 1.6, h: 1.8, mat: 'target' },
+      // Crates for cover.
+      { x: -15, z: -12, w: 2.4, d: 2.4, h: 2.4, mat: 'crate' },
+      { x: 15, z: 12, w: 2.4, d: 2.4, h: 2.4, mat: 'crate' },
+      { x: -15, z: 12, w: 1.6, d: 1.6, h: 1.6, mat: 'crate' },
+      { x: 15, z: -12, w: 1.6, d: 1.6, h: 1.6, mat: 'crate' },
+    ],
+    sites: [
+      { id: 'A', x: -15.5, z: -12, r: 3.2 },
+      { id: 'B', x: 15.5, z: 12, r: 3.2 },
+    ],
+    spawns: {
+      attack: [[-17, 12], [-16, 14], [-17, 8], [-15, 10], [-18, 10]],
+      defend: [[17, -12], [16, -14], [17, -8], [15, -10], [18, -10]],
+    },
+    waypoints: [
+      [-16, 10], [-12, 12], [-8, 12], [-2, 12], [4, 12], [10, 12], [16, 10],
+      [-16, -2], [-10, -2], [-2, -2], [4, -2], [10, -2], [16, -2],
+      [-16, -12], [-10, -12], [-2, -12], [4, -12], [10, -12], [16, -12],
+      [-2, 6], [2, 6], [-2, -6], [2, -6], [-12, 4], [12, -4],
+    ],
+  },
+  {
+    id: 'foundry',
+    name: 'Foundry Yard',
+    tag: 'Map 02 — Outdoor Industrial',
+    outdoor: true,
+    fog: [0x1a2027, 40, 110],
+    ground: { w: 46, d: 38, mat: 'asphalt' },
+    sky: 0x2a3644,
+    ambient: 0xa8b8c8,
+    sun: { color: 0xffe6b8, intensity: 1.6, pos: [24, 30, -14] },
+    solids: [
+      // Perimeter walls (h 3.4).
+      { x: 0, z: -19.3, w: 46.6, d: 0.6, h: 3.4, mat: 'wall' },
+      { x: 0, z: 19.3, w: 46.6, d: 0.6, h: 3.4, mat: 'wall' },
+      { x: -23.3, z: 0, w: 0.6, d: 38.6, h: 3.4, mat: 'wall' },
+      { x: 23.3, z: 0, w: 0.6, d: 38.6, h: 3.4, mat: 'wall' },
+      // Long north corridor: parallel walls forming a 3 m lane at z=-14.
+      { x: -8, z: -12.5, w: 30, d: 0.6, h: 3.0, mat: 'wall' },
+      { x: 12, z: -16, w: 0.6, d: 7, h: 3.0, mat: 'wall' },
+      // Mid connector chokepoint: two walls leaving a 2.4 m gap at x=0.
+      { x: -4, z: 0, w: 8, d: 0.8, h: 3.2, mat: 'wall' },
+      { x: 4, z: 0, w: 8, d: 0.8, h: 3.2, mat: 'wall' },
+      { x: 0, z: -6, w: 0.8, d: 12, h: 3.2, mat: 'wall' },
+      // Foundry hall block (south-west) with a door gap.
+      { x: -14, z: 10, w: 14, d: 0.8, h: 3.6, mat: 'wall' },
+      { x: -14, z: 16, w: 14, d: 0.8, h: 3.6, mat: 'wall' },
+      { x: -20, z: 13, w: 0.8, d: 6, h: 3.6, mat: 'wall' },
+      // Elevated catwalk: platform at y=3.2 with two ramps.
+      { x: 12, z: -6, w: 10, d: 3, h: 0.4, y0: 3.2, mat: 'metal' },
+      { ramp: 1, x: 6.2, z: -6, w: 3, len: 5.5, dir: 'x+', y0: 0, y1: 3.2 },
+      { ramp: 1, x: 17.8, z: -6, w: 3, len: 5.5, dir: 'x-', y0: 0, y1: 3.2 },
+      // Double-stacked crates (cover + verticality).
+      { x: -18, z: -14, w: 2.4, d: 2.4, h: 2.4, mat: 'crate' },
+      { x: -18, z: -14, w: 2.4, d: 2.4, h: 2.4, y0: 2.4, mat: 'crate' },
+      { x: 18, z: 14, w: 2.4, d: 2.4, h: 2.4, mat: 'crate' },
+      { x: 18, z: 14, w: 2.4, d: 2.4, h: 2.4, y0: 2.4, mat: 'crate' },
+      { x: 8, z: 12, w: 2.4, d: 2.4, h: 2.4, mat: 'crate' },
+      { x: -6, z: -4, w: 1.6, d: 1.6, h: 1.6, mat: 'crate' },
+      // Furnace block near site B.
+      { x: 19, z: -14, w: 4, d: 4, h: 5, mat: 'furnace' },
+      // Pipe run along the south wall.
+      { x: 0, z: 17.5, w: 30, d: 1.2, h: 1.0, mat: 'metal' },
+    ],
+    sites: [
+      { id: 'A', x: -17, z: -15, r: 3.4 },
+      { id: 'B', x: 17, z: 13, r: 3.4 },
+    ],
+    spawns: {
+      attack: [[-21, 16], [-20, 18], [-21, 12], [-19, 14], [-22, 14]],
+      defend: [[21, -16], [20, -18], [21, -12], [19, -14], [22, -14]],
+    },
+    waypoints: [
+      [-20, 14], [-14, 14], [-8, 10], [-2, 8], [4, 8], [10, 10], [16, 12],
+      [-20, -8], [-14, -8], [-8, -8], [-2, -4], [2, -2], [8, -4], [14, -4], [20, -8],
+      [-18, -15], [-10, -15], [0, -15], [10, -15], [18, -15],
+      [-2, 14], [2, 14], [12, -6], [6, -6], [18, -6],
+    ],
+  },
+];
