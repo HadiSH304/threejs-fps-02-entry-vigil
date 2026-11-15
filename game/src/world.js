@@ -76,7 +76,9 @@ export class World {
 
     // Hemisphere ambience + sun (shadows only on the outdoor map, where
     // the long shadows are part of the look; indoor light is fluorescent).
-    const hemi = new THREE.HemisphereLight(def.ambient, 0x1a1d22, 0.85);
+    // Bright enough to read at a glance: the first screenshot pass was
+    // too dark to tell walls from floor, so ambience is up across the board.
+    const hemi = new THREE.HemisphereLight(def.ambient, 0x2a2e35, 1.5);
     this.group.add(hemi); this.lights.push(hemi);
     const sun = new THREE.DirectionalLight(def.sun.color, def.sun.intensity);
     sun.position.set(...def.sun.pos);
@@ -90,6 +92,14 @@ export class World {
       sun.shadow.bias = -0.0004;
     }
     this.group.add(sun); this.group.add(sun.target); this.lights.push(sun);
+    if (def.outdoor) {
+      // Southern fill so sun-shadowed wall faces still read (the first
+      // Foundry capture was one big dark slab facing the player).
+      const fill = new THREE.DirectionalLight(0xbfd0e0, 0.55);
+      fill.position.set(-20, 25, 22);
+      fill.target.position.set(0, 0, 0);
+      this.group.add(fill); this.group.add(fill.target); this.lights.push(fill);
+    }
 
     // Solids + ramps from the layout array.
     for (const s of def.solids) {
@@ -147,7 +157,7 @@ export class World {
         panel.rotation.x = Math.PI / 2;
         panel.position.set(px, def.ceiling.y - 0.02, pz);
         this.group.add(panel);
-        const pl = new THREE.PointLight(0xfff2cf, 6, 13, 1.6);
+        const pl = new THREE.PointLight(0xfff2cf, 18, 18, 1.4);
         pl.position.set(px, def.ceiling.y - 0.6, pz);
         this.group.add(pl); this.lights.push(pl);
       }

@@ -31,7 +31,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.25;
 canvasHost.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -220,16 +220,28 @@ function shootPlayer(now) {
     return;
   }
 
-  // Spread: random direction inside the current spread cone.
+  // Spread: random direction inside the current spread cone. The direction
+  // is computed from the player's yaw/pitch (not the camera matrix, which
+  // only updates on render) so a shot always goes where the player aims,
+  // even when called between frames.
   const spread = currentSpread(state, player.speedFrac, player.crouched, !player.onGround);
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
+  const pitch = player.pitch + player.recoilPitch;
+  const yaw = player.yaw + player.recoilYaw;
+  const dir = new THREE.Vector3(
+    -Math.sin(yaw) * Math.cos(pitch),
+    Math.sin(pitch),
+    -Math.cos(yaw) * Math.cos(pitch),
+  );
   const jitter = new THREE.Vector3(
     (Math.random() - 0.5) * 2 * spread,
     (Math.random() - 0.5) * 2 * spread,
     0,
   );
   dir.add(jitter).normalize();
+  // Bot groups move in the simulation between renders; their matrixWorld
+  // is only refreshed on render, so a shot taken between frames would
+  // raycast against stale positions. Refresh the scene graph first.
+  scene.updateMatrixWorld();
   raycaster.set(player.eyePos, dir);
 
   // Smoke blocks the player's shots too: count the denial for telemetry.
@@ -237,7 +249,10 @@ function shootPlayer(now) {
     const end = player.eyePos.clone().add(dir.clone().multiplyScalar(120));
     return segmentHitsSphere(player.eyePos, end, s.pos, s.radius);
   });
-  const hits = raycaster.intersectObjects([...botHitMeshes(), ...world.group.children], false);
+  // Raycast meshes only: world.group also holds sprites (site letters),
+  // and Sprite.raycast needs raycaster.camera set — a raw intersect over
+  // every child throws. Meshes are the only valid shot blockers here.
+  const hits = raycaster.intersectObjects([...botHitMeshes(), ...world.group.children.filter((o) => o.isMesh)], false);
   const first = hits[0];
   if (!first) { addTracer(player.eyePos, player.eyePos.clone().add(dir.clone().multiplyScalar(60)), def.tracer); return; }
   const hitPoint = first.point;
@@ -278,10 +293,17 @@ function registerPlayerHit(bot, res, headshot, dist) {
 }
 
 function addTracer(from, to, color) {
-  const geo = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
-  scene.add(line);
-  tracers.push({ line, life: 0.09 });
+  // A glowing bolt (thin box), not a 1 px line: it reads at a glance in
+  // motion and in a still screenshot, and fades like a line would.
+  const dir = to.clone().sub(from);
+  const len = dir.length();
+  const geo = new THREE.BoxGeometry(0.03, 0.03, len);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+  const bolt = new THREE.Mesh(geo, mat);
+  bolt.position.copy(from).addScaledVector(dir, 0.5);
+  bolt.lookAt(to);
+  scene.add(bolt);
+  tracers.push({ line: bolt, life: 0.09 });
 }
 
 function addSparks(point, gold) {
@@ -570,6 +592,11 @@ function processBotEvents(events) {
 let lastTime = performance.now();
 let accumulator = 0;
 let framesRendered = 0;
+// In staging mode the scene is frozen after setup so a screenshot keeps
+// its mid-fight framing (and the player keeps full health) instead of
+// drifting while software rendering crawls.
+let shotFrozen = false;
+let shotTarget = null;
 
 function stepSim(dt) {
   const now = match.now + dt;
@@ -628,7 +655,7 @@ function frame(t) {
   requestAnimationFrame(frame);
   const frameDt = Math.min(0.05, (t - lastTime) / 1000);
   lastTime = t;
-  if (!paused) {
+  if (!paused && !shotFrozen) {
     accumulator += frameDt;
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < 5) {
@@ -637,6 +664,11 @@ function frame(t) {
       steps++;
     }
     if (steps === 5) accumulator = 0;
+  }
+  // Keep the mid-fight tracer alive in the frozen cover shot: it expires
+  // after 0.09 s, so re-draw it every frame from the player to the target.
+  if (SHOT_MODE === 'fight' && shotTarget && shotTarget.alive) {
+    addTracer(player.eyePos, shotTarget.eyePos, WEAPONS.kestrel.tracer);
   }
   // Camera: player, or spectate a teammate when dead.
   if (player.alive) player.applyCamera(camera);
@@ -707,25 +739,33 @@ function stageShot() {
   match.phaseT = 0;
   match.roundT = 85;
   if (SHOT_MODE === 'fight') {
-    // Put the player mid-map, aiming down the east lane at two enemies.
-    player.pos.set(-2, 0, 2);
-    player.yaw = -Math.PI / 2 - 0.35;
-    player.pitch = -0.02;
+    // Mid-fight cover: player at the west end of the hall, aiming into the
+    // open south-east room where three enemies stand in clear sight (the
+    // first staging put the target behind the x=6 spine wall).
+    player.pos.set(-4, 0, 2);
+    player.yaw = -1.85;
+    player.pitch = -0.01;
     const foes = match.bots.filter((b) => b.team !== player.team);
-    foes[0].pos.set(8, 0, -4); foes[0].yaw = Math.PI / 2; foes[0].syncMesh();
-    foes[1].pos.set(12, 0, 2); foes[1].yaw = Math.PI / 2; foes[1].syncMesh();
-    foes[2].pos.set(4, 0, 8); foes[2].yaw = Math.PI; foes[2].syncMesh();
-    addTracer(player.eyePos, foes[0].eyePos, WEAPONS.kestrel.tracer);
+    foes[0].pos.set(10, 0, 8); foes[0].yaw = Math.PI / 2; foes[0].syncMesh();
+    foes[1].pos.set(12, 0, 5); foes[1].yaw = Math.PI / 2; foes[1].syncMesh();
+    foes[2].pos.set(7, 0, 11); foes[2].yaw = Math.PI; foes[2].syncMesh();
+    shotTarget = foes[0];
     addSparks(foes[0].eyePos, true);
     hud.hitmarker(true);
+    shotFrozen = true;
   }
   if (SHOT_MODE === 'yard') {
-    player.pos.set(-18, 0, 10);
-    player.yaw = -Math.PI / 2 - 0.5;
-    player.pitch = 0.05;
+    // Foundry overview FROM the catwalk: the signature elevated vantage,
+    // looking south-west down the yard at the mid connector, the crates
+    // and site B. (Ground-level stagings kept facing the connector wall.)
+    player.pos.set(12, 3.6, -6);
+    player.yaw = 2.9;
+    player.pitch = -0.12;
     const foes = match.bots.filter((b) => b.team !== player.team);
     foes[0].pos.set(2, 0, -4); foes[0].syncMesh();
-    foes[1].pos.set(12, 3.6, -6); foes[1].syncMesh(); // on the catwalk
+    foes[1].pos.set(8, 0, 12); foes[1].syncMesh();
+    foes[2].pos.set(17, 0, 13); foes[2].syncMesh();
+    shotFrozen = true;
   }
   if (SHOT_MODE === 'buy') {
     match.phase = 'buy';
@@ -743,6 +783,7 @@ function stageShot() {
     hud.showAAR(true, match.aarStats(512));
     hud.centerMsg('MATCH WON 9 — 4 — RANK S', 60000);
   }
+  if (SHOT_MODE === 'buy' || SHOT_MODE === 'aar') shotFrozen = true;
   hud.setScore(match.score.attack, match.score.defend, match.round, MAPS[mapIndex].name, match.wave);
 }
 

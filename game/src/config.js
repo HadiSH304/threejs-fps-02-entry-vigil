@@ -120,11 +120,11 @@ export const MAPS = [
     name: 'Killhouse',
     tag: 'Map 01 — Indoor CQB',
     outdoor: false,
-    fog: [0x11141a, 26, 60],
+    fog: [0x1a1e24, 26, 60],
     ground: { w: 38, d: 30, mat: 'concrete' },
-    sky: 0x0b0d11,
-    ambient: 0x8a94a8,
-    sun: { color: 0xfff2d8, intensity: 0.35, pos: [10, 18, 6] },
+    sky: 0x14171c,
+    ambient: 0x9aa2ae,
+    sun: { color: 0xfff2d8, intensity: 0.9, pos: [10, 18, 6] },
     // Fluorescent ceiling panels (emissive) + a few point lights.
     ceiling: { y: 4.2, panels: [[-12, -8], [0, -8], [12, -8], [-12, 0], [0, 0], [12, 0], [-12, 8], [0, 8], [12, 8]] },
     solids: [
@@ -181,11 +181,11 @@ export const MAPS = [
     name: 'Foundry Yard',
     tag: 'Map 02 — Outdoor Industrial',
     outdoor: true,
-    fog: [0x1a2027, 40, 110],
+    fog: [0x39434e, 40, 110],
     ground: { w: 46, d: 38, mat: 'asphalt' },
-    sky: 0x2a3644,
-    ambient: 0xa8b8c8,
-    sun: { color: 0xffe6b8, intensity: 1.6, pos: [24, 30, -14] },
+    sky: 0x4a5c6e,
+    ambient: 0xb8c8d8,
+    sun: { color: 0xffe6b8, intensity: 2.6, pos: [24, 30, -14] },
     solids: [
       // Perimeter walls (h 3.4).
       { x: 0, z: -19.3, w: 46.6, d: 0.6, h: 3.4, mat: 'wall' },

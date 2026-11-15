@@ -95,8 +95,15 @@ function main(): void {
     }),
   );
 
-  // 5. Manifest for the build log.
-  const dossierBytes = statSync(join(out, 'dossier.json')).size;
+  // 5. Dossier integrity: it must not leak this machine's absolute paths
+  // (the grader builds it in a fresh container), and its hash is printed
+  // so two runs can be compared byte for byte.
+  const dossierPath = join(out, 'dossier.json');
+  const dossierText = readFileSync(dossierPath, 'utf8');
+  if (dossierText.includes(here) || dossierText.includes('/home/')) {
+    throw new Error('dossier.json leaks an absolute local path');
+  }
+  const dossierBytes = statSync(dossierPath).size;
   const shotBytes = shotFiles.reduce((n, f) => n + statSync(f).size, 0);
   console.log(JSON.stringify({
     entry: 'VIGIL // FOUNDRY',
@@ -105,6 +112,7 @@ function main(): void {
     screenshots: shotFiles.length,
     screenshot_bytes: shotBytes,
     dossier_bytes: dossierBytes,
+    dossier_sha256: sha256(dossierPath),
   }));
 }
 
