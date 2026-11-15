@@ -23,15 +23,20 @@ const NAMES = {
   defend: ['Harbor', 'Anchor', 'Breaker', 'Tide', 'Reef'],
 };
 
+// Name tag: small and never wider than the bot (0.62 m vs a ~0.8 m
+// silhouette), a semi-transparent band with a team-color underline, fixed
+// just above the helmet so tags stay readable without dominating the
+// frame or overlapping each other at different depths.
 function nameSprite(text, color) {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96;
   const g = c.getContext('2d');
-  g.fillStyle = 'rgba(10,12,14,0.7)'; g.fillRect(0, 8, 256, 48);
-  g.fillStyle = color; g.font = 'bold 30px monospace'; g.textAlign = 'center';
-  g.fillText(text, 128, 42);
+  g.fillStyle = 'rgba(8,10,12,0.55)'; g.fillRect(0, 20, 256, 56);
+  g.fillStyle = color; g.fillRect(0, 76, 256, 5);
+  g.fillStyle = color; g.font = 'bold 42px monospace'; g.textAlign = 'center';
+  g.fillText(text, 128, 62);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  sp.scale.set(2.2, 0.55, 1);
+  sp.scale.set(0.62, 0.2325, 1);
   return sp;
 }
 
@@ -105,7 +110,7 @@ export class Bot {
     box(0.06, 0.06, 0.12, new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.7 }), 0.28, 1.15, -0.2);
     this.hitMeshes = [legs, torso, head];
     const label = nameSprite(this.name, this.team === 'attack' ? '#ffb060' : '#8fc4ff');
-    label.position.y = 2.05;
+    label.position.y = 1.98;
     group.add(label);
     group.traverse((o) => { o.castShadow = true; });
     scene.add(group);

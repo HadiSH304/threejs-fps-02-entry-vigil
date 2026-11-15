@@ -239,6 +239,7 @@ export const MAPS = [
     props: [
       { kind: 'barrel', x: -4, z: 6 }, { kind: 'barrel', x: -3.2, z: 6.4 }, { kind: 'barrel', x: -3.6, z: 5.2 },
       { kind: 'barrel', x: 14, z: 8 }, { kind: 'barrel', x: -12, z: -10 },
+      { kind: 'barrel', x: 3, z: 9 }, { kind: 'barrel', x: 11, z: 9 },
       { kind: 'planter', x: -10, z: 14 }, { kind: 'planter', x: 6, z: -12 },
       { kind: 'barrier', x: 0, z: -3 }, { kind: 'barrier', x: -8, z: 2 },
       { kind: 'lamp', x: -20, z: 0 }, { kind: 'lamp', x: 20, z: 0 }, { kind: 'lamp', x: 0, z: -18 },

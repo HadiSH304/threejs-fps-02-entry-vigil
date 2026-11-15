@@ -99,12 +99,14 @@ export class World {
       this.group.add(dome);
       this.ownedGeometries.push(dome.geometry);
       this.ownedMaterials.push(dome.material);
-      const sunTex = radialTex(128, [[0, 'rgba(255,220,150,1)'], [0.35, 'rgba(255,160,70,0.9)'], [1, 'rgba(255,120,40,0)']]);
+      // Sun disc kept small and soft (was a 34 m blown-out white disc):
+      // a warm glow low on the horizon, not a second light source.
+      const sunTex = radialTex(128, [[0, 'rgba(255,205,130,0.9)'], [0.4, 'rgba(255,160,70,0.65)'], [1, 'rgba(255,120,40,0)']]);
       const disc = new THREE.Mesh(
-        new THREE.PlaneGeometry(34, 34),
+        new THREE.PlaneGeometry(20, 20),
         new THREE.MeshBasicMaterial({ map: sunTex, transparent: true, fog: false, depthWrite: false }),
       );
-      disc.position.set(120, 26, -64);
+      disc.position.set(120, 24, -64);
       disc.lookAt(0, 6, 0);
       this.group.add(disc);
       this.ownedGeometries.push(disc.geometry);
@@ -120,7 +122,8 @@ export class World {
 
     // Hemisphere ambience + sun (shadows only on the outdoor map, where
     // the long shadows are part of the look; indoor light is fluorescent).
-    const hemi = new THREE.HemisphereLight(def.ambient, 0x2a2e35, 1.5);
+    // Hemi raised 1.5 -> 1.9 in v3 so surfaces read clearly in the stills.
+    const hemi = new THREE.HemisphereLight(def.ambient, 0x2a2e35, 1.9);
     this.group.add(hemi); this.lights.push(hemi);
     const sun = new THREE.DirectionalLight(def.sun.color, def.sun.intensity);
     sun.position.set(...def.sun.pos);
@@ -135,7 +138,7 @@ export class World {
     }
     this.group.add(sun); this.group.add(sun.target); this.lights.push(sun);
     if (def.outdoor) {
-      const fill = new THREE.DirectionalLight(0x9a7ab0, 0.7);
+      const fill = new THREE.DirectionalLight(0x9a7ab0, 1.15);
       fill.position.set(-20, 25, 22);
       fill.target.position.set(0, 0, 0);
       this.group.add(fill); this.group.add(fill.target); this.lights.push(fill);

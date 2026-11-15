@@ -51,7 +51,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+renderer.toneMappingExposure = 1.32;
 canvasHost.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -381,16 +381,34 @@ function registerPlayerHit(bot, res, headshot, dist) {
   }
 }
 
-function addTracer(from, to, color) {
+// Tracer bolt. Staged shots (screenshots) get a thicker bolt with a
+// white-hot core so the shot reads in a still frame; live fire keeps the
+// thin 0.05 m bolt. The core is a second mesh so the tracer has a bright
+// spine even against a bright sky.
+function addTracer(from, to, color, staged = false) {
   const dir = to.clone().sub(from);
   const len = dir.length();
-  const geo = new THREE.BoxGeometry(0.05, 0.05, len);
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+  const w = staged ? 0.07 : 0.05;
+  const geo = new THREE.BoxGeometry(w, w, len);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: staged ? 0.85 : 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
   const bolt = new THREE.Mesh(geo, mat);
   bolt.position.copy(from).addScaledVector(dir, 0.5);
   bolt.lookAt(to);
   scene.add(bolt);
-  tracers.push({ line: bolt, life: 0.09 });
+  // A staged bolt never fades: it is placed once for the screenshot and
+  // must survive slow (software-rendered) frames, where a 0.14 s life
+  // expires before the next frame renders it — that is why v3-pass-1
+  // showed no tracer at all.
+  const entry = { line: bolt, life: staged ? Infinity : 0.09, staged };
+  if (staged) {
+    const coreGeo = new THREE.BoxGeometry(0.02, 0.02, len);
+    const core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({ color: 0xfff2cc, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    core.position.copy(bolt.position);
+    core.lookAt(to);
+    scene.add(core);
+    entry.core = core;
+  }
+  tracers.push(entry);
 }
 
 function addSparks(point, gold) {
@@ -427,15 +445,23 @@ function throwUtility(kind) {
 }
 
 // Spawn a smoke volume at pos (shared by thrown smoke and staging).
-function spawnSmoke(pos) {
-  const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(3.5, 20, 14),
-    new THREE.MeshBasicMaterial({ map: textures.smoke, transparent: true, opacity: 0.55, depthWrite: false }),
-  );
-  mesh.position.copy(pos);
-  mesh.position.y = Math.max(1.2, pos.y);
-  scene.add(mesh);
-  smokes.push({ pos: mesh.position.clone(), radius: 3.5, until: match.now + 14, mesh });
+// Staged smoke (screenshots) is a denser, larger cloud: overlapping
+// puffs at higher opacity with a darker tint, so it reads as a smoke
+// volume in a still instead of haze. Live smoke is unchanged.
+function spawnSmoke(pos, opts = {}) {
+  const radius = opts.radius ?? 3.5;
+  const opacity = opts.opacity ?? 0.55;
+  const tint = opts.tint ?? 0xffffff;
+  const puffs = opts.puffs ?? [[0, 0, 0]];
+  for (const [ox, oy, oz] of puffs) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 20, 14),
+      new THREE.MeshBasicMaterial({ map: textures.smoke, color: tint, transparent: true, opacity, depthWrite: false }),
+    );
+    mesh.position.set(pos.x + ox, Math.max(1.2, pos.y + oy), pos.z + oz);
+    scene.add(mesh);
+    smokes.push({ pos: mesh.position.clone(), radius, until: match.now + 14, mesh });
+  }
   sound.smoke();
 }
 
@@ -752,9 +778,6 @@ function frame(t) {
     }
     if (steps === 5) accumulator = 0;
   }
-  if ((SHOT_MODE === 'fight' || SHOT_MODE === 'yard') && shotTarget && shotTarget.alive) {
-    addTracer(player.eyePos, shotTarget.eyePos, WEAPONS.kestrel.tracer);
-  }
   if (player.alive) player.applyCamera(camera);
   else if (spectateTarget && spectateTarget.alive) {
     camera.position.set(spectateTarget.pos.x, spectateTarget.pos.y + 1.6, spectateTarget.pos.z);
@@ -765,9 +788,17 @@ function frame(t) {
   viewmodel.position.y = -0.24 + Math.sin(t * 0.002) * 0.004 * player.speedFrac;
   viewmodel.rotation.x = player.recoilPitch * 0.4;
   for (let i = tracers.length - 1; i >= 0; i--) {
-    tracers[i].life -= frameDt;
-    tracers[i].line.material.opacity = Math.max(0, tracers[i].life / 0.09) * 0.9;
-    if (tracers[i].life <= 0) { scene.remove(tracers[i].line); tracers[i].line.geometry.dispose(); tracers.splice(i, 1); }
+    const t = tracers[i];
+    if (t.staged) continue; // staged bolts hold for the screenshot
+    t.life -= frameDt;
+    const maxLife = 0.09;
+    t.line.material.opacity = Math.max(0, t.life / maxLife) * 0.9;
+    if (t.core) t.core.material.opacity = Math.max(0, t.life / maxLife) * 0.95;
+    if (t.life <= 0) {
+      scene.remove(t.line); t.line.geometry.dispose();
+      if (t.core) { scene.remove(t.core); t.core.geometry.dispose(); }
+      tracers.splice(i, 1);
+    }
   }
   for (let i = sparks.length - 1; i >= 0; i--) {
     const s = sparks[i];
@@ -817,17 +848,27 @@ function stageShot() {
   match.phaseT = 0;
   match.roundT = 85;
   if (SHOT_MODE === 'fight') {
+    // Foundry cover: mid-match (round 7, 5-2), camera pitched down so
+    // the sky is a top band over the wall tops, not half the frame.
+    // Yaw -1.37 looks down the east lane: the near bot stands clear of
+    // the barrel cluster (pass 1 hid it behind the barrels, crosshair
+    // on a barrel), sun sits upper-right, smoke at the east crates.
     stageFight({
-      map: MAPS[1], px: -6, pz: 8, yaw: -1.13, pitch: -0.02,
-      foes: [[0, 3, -0.88], [5, 5, -1.30], [-2, 6, -1.11]],
-      smoke: [10, 1.4, 2],
+      map: MAPS[1], px: -6, pz: 8, yaw: -1.37, pitch: -0.18,
+      foes: [[-1.6, 7.1, -1.37], [5.3, 8.3, -1.59], [10.3, 2.6, -1.25]],
+      mate: [-1.8, 3.6, 0.99],
+      smoke: [15.2, 1.4, 11.8],
     });
   }
   if (SHOT_MODE === 'yard') {
+    // Killhouse: same mid-match treatment, shot through the spine gap.
+    // Foes moved into the open (pass 1 left two of them behind the
+    // plywood barrier / spine wall, tags unreadable).
     stageFight({
-      map: MAPS[0], px: -4, pz: 2, yaw: -1.82, pitch: -0.01,
-      foes: [[9, 4, -1.72], [11, 7, -1.89], [8, 5, -1.82]],
-      smoke: [14, 1.4, 12],
+      map: MAPS[0], px: -4, pz: 2, yaw: -1.75, pitch: -0.15,
+      foes: [[0.4, 2.8, -1.75], [4, 8, -2.21], [12.3, 7.8, -1.91]],
+      mate: [1.5, -0.6, 0.74],
+      smoke: [16, 1.4, 11],
     });
   }
   if (SHOT_MODE === 'buy') {
@@ -854,8 +895,10 @@ function stageShot() {
 stageShot();
 requestAnimationFrame(frame);
 
-// Shared mid-fight staging for the two combat screenshots: place the
-// player, three enemies facing the player, a smoke cloud, a muzzle flash
+// Shared mid-fight staging for the two combat screenshots: a MID-MATCH
+// fight (round 8, 5-2, hurt player, spent ammo, partly used utility),
+// three enemies spread along the lane at varied distances, one teammate
+// at the frame edge, a dense smoke cloud off to the side, a muzzle flash
 // and one radio callout in the feed; freeze the sim so the frame holds.
 function stageFight(cfg) {
   player.pos.set(cfg.px, 0, cfg.pz);
@@ -866,16 +909,57 @@ function stageFight(cfg) {
     foes[i].pos.set(x, 0, z); foes[i].yaw = yaw; foes[i].syncMesh();
   });
   shotTarget = foes[0];
-  addSparks(foes[0].eyePos, true);
-  spawnSmoke(new THREE.Vector3(...cfg.smoke));
-  flashQuad.material.opacity = 0.75;
+  // One teammate at the frame edge, facing the fight.
   const mate = match.bots.find((b) => b.team === player.team);
+  if (mate && cfg.mate) {
+    mate.pos.set(cfg.mate[0], 0, cfg.mate[1]); mate.yaw = cfg.mate[2]; mate.syncMesh();
+  }
+  addSparks(foes[0].eyePos, true);
+  // Denser, larger smoke: three puffs, darker tint, clear of the bots.
+  spawnSmoke(new THREE.Vector3(...cfg.smoke), {
+    radius: 4.2, opacity: 0.8, tint: 0x8b9096,
+    puffs: [[0, 0, 0], [2.6, 0.5, 1.4], [-2.4, 0.7, -1.3]],
+  });
+  flashQuad.material.opacity = 0.75;
+  // Persistent staged tracers: the player's bolt at the crosshair target
+  // and one enemy's return fire across the lane (crossfire read). Added
+  // once here — they never fade, so the still always catches the shot.
+  // NOTE: a bolt through the camera centre projects to a single point,
+  // so the player's bolt starts at the viewmodel muzzle and the enemy's
+  // bolt is aimed at the teammate — both then read as streaks.
+  const fwd = new THREE.Vector3(-Math.sin(player.yaw) * Math.cos(player.pitch), Math.sin(player.pitch), -Math.cos(player.yaw) * Math.cos(player.pitch));
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const muzzle = player.eyePos.clone().addScaledVector(fwd, 1.5).addScaledVector(right, 0.28).add(new THREE.Vector3(0, -0.16, 0));
+  addTracer(muzzle, foes[0].eyePos, WEAPONS.kestrel.tracer, true);
+  // No enemy bolt: a far-to-near line converges at head height in this
+  // framing and reads as a wire through the crosshair target.
+  stageMidMatch();
   if (mate) {
     const [fx, fz] = cfg.foes[0];
     radio.say(mate, 'contact', zoneName(cfg.map, fx, fz), match.now, cfg.map, { x: fx, z: fz });
   }
   hud.el.hitmarker?.classList.add('on', 'hs');
   shotFrozen = true;
+}
+
+// Mid-match state for the combat stills: round 7 at 5-2, a hurt player
+// with armor and thousands in the bank, a partly spent magazine and one
+// utility already used. Called after startMatch (which resets to round 1).
+// Round 7, not 8: round 8 is halftime, and ending it would swap sides
+// and reset the player's money to $800 mid-soak.
+function stageMidMatch() {
+  match.round = 7;
+  match.score = { attack: 5, defend: 2 };
+  match.roundT = 63;
+  player.hp = 62;
+  player.armor = 50;
+  player.money = 4250;
+  player.utility = { smoke: 0, flash: 1, frag: 0 };
+  loadout[1].mag = 17;
+  loadout[1].reserve = 63;
+  // startMatch announced ROUND 1; the staged frame is round 8, so the
+  // stale center message must not linger into the screenshot.
+  hud.el['center-msg']?.classList.remove('show');
 }
 
 window.__VIGIL__ = {
